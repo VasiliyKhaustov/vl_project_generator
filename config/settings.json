@@ -1,0 +1,18 @@
+{
+  "oda": {
+    "mac_exec_path": "/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter",
+    "windows_exec_path": "C:\\Program Files\\ODA\\ODAFileConverter\\ODAFileConverter.exe"
+  },
+  "pdf_export": {
+    "external_command": "",
+    "autocad_accoreconsole_path": "C:\\Program Files\\Autodesk\\AutoCAD 2024\\accoreconsole.exe",
+    "qcad_dwg2pdf_path": "/Applications/QCAD.app/Contents/Resources/dwg2pdf",
+    "qcad_args": [
+      "-no-gui",
+      "-no-dock-icon",
+      "-f",
+      "-a",
+      "-auto-orientation"
+    ]
+  }
+}

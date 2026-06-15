@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Автоматизация ТУ</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260621" />
+  </head>
+  <body data-theme="dark">
+    <div class="page-bg" aria-hidden="true"></div>
+    <div class="cursor-light" id="cursorLight"></div>
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <div class="brand" data-i18n="brand">Автоматизация ТУ</div>
+          <div class="system-status" data-i18n="systemStatus">Инженерная система подготовки документации</div>
+        </div>
+        <div class="top-actions">
+          <button class="top-control liquid-control" id="themeToggle" type="button" data-i18n="themeLight">Светлая тема</button>
+          <div class="language-picker liquid-control" id="languagePicker">
+            <button
+              class="language-picker__trigger top-control"
+              id="languageTrigger"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="languageMenu"
+            >
+              <span class="language-picker__flag" id="languageFlag" aria-hidden="true">🇷🇺</span>
+              <span class="language-picker__name" id="languageName">Русский</span>
+              <span class="language-picker__chevron" aria-hidden="true"></span>
+            </button>
+            <ul class="language-picker__menu" id="languageMenu" role="listbox" hidden>
+              <li>
+                <button class="language-picker__option is-active" type="button" role="option" data-lang="ru">
+                  <span class="language-picker__option-flag" aria-hidden="true">🇷🇺</span>
+                  <span>Русский</span>
+                </button>
+              </li>
+              <li>
+                <button class="language-picker__option" type="button" role="option" data-lang="en">
+                  <span class="language-picker__option-flag" aria-hidden="true">🇬🇧</span>
+                  <span>English</span>
+                </button>
+              </li>
+              <li>
+                <button class="language-picker__option" type="button" role="option" data-lang="de">
+                  <span class="language-picker__option-flag" aria-hidden="true">🇩🇪</span>
+                  <span>Deutsch</span>
+                </button>
+              </li>
+              <li>
+                <button class="language-picker__option" type="button" role="option" data-lang="it">
+                  <span class="language-picker__option-flag" aria-hidden="true">🇮🇹</span>
+                  <span>Italiano</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <p class="eyebrow" data-i18n="eyebrow">Локальный инженерный контур</p>
+          <h1 class="hero-title" data-i18n="heroTitle">Автоматизация подготовки документации по ТУ</h1>
+          <p class="hero-copy" data-i18n="heroCopy">
+            Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку и полный PDF-комплект.
+          </p>
+        </section>
+
+        <section class="workspace">
+          <form class="work-card glass" id="processForm">
+            <div class="panel-head">
+              <span data-i18n="inputData">Исходные данные</span>
+              <span class="run-state" id="runState" data-i18n="idle">Ожидание</span>
+            </div>
+
+            <label class="field field-primary">
+              <span class="field-label" data-i18n="projectNumber">Номер проекта</span>
+              <input
+                id="projectNumber"
+                name="project_number"
+                type="text"
+                placeholder="ПСД/48/2026/052"
+                autocomplete="off"
+                inputmode="text"
+              />
+            </label>
+
+            <div class="field wire-field" id="wireField">
+              <span class="field-label" data-i18n="wirePanelTitle">Выбор провода</span>
+              <div class="language-picker liquid-control" id="wirePicker">
+                <button
+                  class="language-picker__trigger"
+                  id="wireTrigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-controls="wireMenu"
+                  aria-describedby="wireHint"
+                >
+                  <span class="language-picker__name" id="wireValue">Автоматически</span>
+                  <span class="language-picker__chevron" aria-hidden="true"></span>
+                </button>
+                <ul class="language-picker__menu" id="wireMenu" role="listbox" hidden>
+                  <li>
+                    <button class="language-picker__option is-active" type="button" role="option" data-value="auto">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title" data-wire-label="wireAuto">Автоматически</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireAutoMeta">Из технических условий</span>
+                      </span>
+                    </button>
+                  </li>
+                  <li>
+                    <button class="language-picker__option" type="button" role="option" data-value="manual:3*70+1*70">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title">3х70+1х70</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireManualMeta">Ручной выбор</span>
+                      </span>
+                    </button>
+                  </li>
+                  <li>
+                    <button class="language-picker__option" type="button" role="option" data-value="manual:3*50+1*54,6">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title">3х50+1х54,6</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireManualMeta">Ручной выбор</span>
+                      </span>
+                    </button>
+                  </li>
+                  <li>
+                    <button class="language-picker__option" type="button" role="option" data-value="manual:3*35+1*35">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title">3х35+1х35</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireManualMeta">Ручной выбор</span>
+                      </span>
+                    </button>
+                  </li>
+                </ul>
+              </div>
+              <input id="wireSelectionMode" name="wire_selection_mode" type="hidden" value="auto" />
+              <input id="wireManualValue" name="wire_manual_value" type="hidden" value="" />
+              <p class="field-hint wire-hint" id="wireHint" data-i18n="wireHintAuto">Система определит провод сама</p>
+            </div>
+
+            <div class="form-section">
+              <p class="form-section__label" data-i18n="uploadSection">Загрузка исходных файлов</p>
+              <div class="upload-grid">
+              <label class="upload-control liquid-control" for="tuFile" data-empty="true">
+                <input id="tuFile" name="tu_file" type="file" accept=".docx,.pdf" />
+                <span class="upload-label" data-i18n="tuUpload">ТУ DOCX/PDF</span>
+                <span class="upload-name" id="tuName" data-empty="true">Файл не выбран</span>
+              </label>
+
+              <label class="upload-control liquid-control" for="planFile" data-empty="true">
+                <input id="planFile" name="plan_file" type="file" accept=".dxf,.dwg" />
+                <span class="upload-label" data-i18n="planUpload">План DWG/DXF</span>
+                <span class="upload-name" id="planName" data-empty="true">Файл не выбран</span>
+              </label>
+            </div>
+            </div>
+
+            <div class="notice" id="notice" role="status" aria-live="polite"></div>
+          </form>
+
+          <aside class="status-card glass">
+            <div class="panel-head">
+              <span data-i18n="processingStatus">Статус обработки</span>
+            </div>
+            <div class="status-list" id="statusList">
+              <div class="status-item" data-step="files_uploaded">
+                <span class="indicator"></span>
+                <span data-i18n="stepFiles">Файлы загружены</span>
+              </div>
+              <div class="status-item" data-step="tu_extracted">
+                <span class="indicator"></span>
+                <span data-i18n="stepTu">Данные из ТУ извлечены</span>
+              </div>
+              <div class="status-item" data-step="plan_analyzed">
+                <span class="indicator"></span>
+                <span data-i18n="stepPlan">План проанализирован</span>
+              </div>
+              <div class="status-item" data-step="replacement_map_created">
+                <span class="indicator"></span>
+                <span data-i18n="stepMap">Карта замен создана</span>
+              </div>
+              <div class="status-item" data-step="dwg_filled">
+                <span class="indicator"></span>
+                <span data-i18n="stepDwg">Записка заполнена</span>
+              </div>
+              <div class="status-item" data-step="completed">
+                <span class="indicator"></span>
+                <span data-i18n="stepDone">Готово</span>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="benefits">
+          <article class="benefit-card glass">
+            <h2 data-i18n="cardOneTitle">Заполнить записку</h2>
+            <p data-i18n="cardOneText">Введите номер, добавьте ТУ и план — система подготовит DWG-записку с нужными данными.</p>
+          </article>
+          <article class="benefit-card glass">
+            <h2 data-i18n="cardTwoTitle">Проверить план</h2>
+            <p data-i18n="cardTwoText">Приложение посчитает длину линии, опоры и заземления без изменения исходного чертежа.</p>
+          </article>
+          <article class="benefit-card glass">
+            <h2 data-i18n="cardThreeTitle">Собрать комплект</h2>
+            <p data-i18n="cardThreeText">После обработки можно скачать записку и итоговый PDF, если экспорт доступен.</p>
+          </article>
+        </section>
+      </main>
+
+      <footer data-i18n="footer">Автоматизация ТУ — инженерный инструмент для подготовки проектной документации</footer>
+    </div>
+
+    <nav class="action-dock" aria-label="Действия">
+      <button class="dock-button dock-start liquid-control" id="startButton" type="submit" form="processForm" data-label="Старт" aria-label="Старт" data-i18n-label="dockStart" data-i18n-aria="dockStart">
+        <span class="dock-icon">▶</span>
+      </button>
+      <button class="dock-button dock-note liquid-control" id="downloadNote" type="button" data-label="Скачать записку" aria-label="Скачать записку" data-i18n-label="dockNote" data-i18n-aria="dockNote" disabled>
+        <span class="dock-icon">DWG</span>
+      </button>
+      <button class="dock-button dock-pdf liquid-control" id="downloadPdf" type="button" data-label="Скачать PDF" aria-label="Скачать PDF" data-i18n-label="dockPdf" data-i18n-aria="dockPdf" disabled>
+        <span class="dock-icon">PDF</span>
+      </button>
+    </nav>
+
+    <script src="/static/script.js?v=20260622"></script>
+  </body>
+</html>

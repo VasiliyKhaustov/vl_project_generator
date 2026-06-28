@@ -86,6 +86,28 @@ class PlanSupportCountTests(unittest.TestCase):
         self.assertEqual(data["supports"]["K21"], 1)
         self.assertTrue(any("вне основной трассы" in warning for warning in warnings))
 
+    def test_project_055_counts_supports_when_route_and_blocks_use_different_coordinates(self) -> None:
+        plan_path = Path("output/VsePro/ПСД_48_2026_527/ПСД-48-2026-055 План.dxf")
+        if not plan_path.exists():
+            self.skipTest("Пример плана 055 недоступен в рабочей копии.")
+        data, warnings = analyze_dxf(plan_path)
+        self.assertEqual(data["supports"]["P23"], 5)
+        self.assertEqual(data["supports"]["K21"], 2)
+        self.assertEqual(data["line_length_m"], 220.0)
+        self.assertTrue(
+            any("разных системах координат" in warning for warning in warnings),
+            warnings,
+        )
+
+    def test_project_177_reads_sl_name_001_attributes(self) -> None:
+        plan_path = Path("output/VsePro/ПСД_48_2026_180/ПСД-48-2026-177 План.dxf")
+        if not plan_path.exists():
+            self.skipTest("Пример плана 177 недоступен в рабочей копии.")
+        data, _ = analyze_dxf(plan_path)
+        self.assertEqual(data["supports"]["P23"], 5)
+        self.assertEqual(data["supports"]["A23"], 2)
+        self.assertEqual(data["line_length_m"], 227.0)
+
 
 if __name__ == "__main__":
     unittest.main()

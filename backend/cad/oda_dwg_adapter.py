@@ -9,7 +9,7 @@ import ezdxf
 
 from backend.core.cable_format import format_sip4_spec_table_kg
 from backend.core.file_utils import copy_file_with_retry
-from backend.core.tu_parser import abbreviate_garden_partnership_terms
+from backend.core.tu_parser import abbreviate_address_display_terms
 
 from .oda_converter import OdaConverter
 
@@ -81,7 +81,7 @@ BODY_PARAGRAPH_LEFT_ALIGN_MARKERS = (
 
 CLIMATE_TABLE_SHIFT_Y = -34.0
 CLIMATE_TABLE_FINE_SHIFT_Y = -8.0
-TITLE_PAGE_YEAR_PARAGRAPH_TRIM = 3
+TITLE_PAGE_YEAR_PARAGRAPH_GAPS = 2
 REFERENCE_DOCS_TABLE_SHIFT_Y = -4.0
 BODY_TEXT_HEIGHT = 3.0
 BREAKER_TEXT_HEIGHT = 2.0
@@ -91,6 +91,10 @@ LONG_SPEC_TEXT_HEIGHT = 3.0
 MIN_WORK_TABLE_ROW_HEIGHT = 8.0
 BODY_LINE_SPACING = 1.5
 GENERAL_NOTES_LINE_SPACING = 1.0
+BODY_EMPTY_PARAGRAPH_NEXT_MARKERS = (
+    "Доставка материалов",
+    "При выборе оптимального",
+)
 TOC_ELECTRO_ITEM_PLAIN = "2. Электротехнические решения"
 TOC_ALIGNMENT_REFERENCE_ITEMS = (
     "1. Исходные данные",
@@ -203,6 +207,7 @@ CLIMATE_TABLE_ROW_REPLACEMENTS = (
 WORK_TABLE_SUPPORT_MARKERS = {
     "П23": "{{P23}}",
     "П 23": "{{P23}}",
+    "УП23": "{{P23}}",
     "А23": "{{A23}}",
     "А 23": "{{A23}}",
     "К21": "{{K21}}",
@@ -211,6 +216,21 @@ WORK_TABLE_SUPPORT_MARKERS = {
     "УА23*": "{{YA23}}",
     "УА 23": "{{YA23}}",
 }
+WORK_TABLE_SUPPORT_NAME_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"промежуточн|25\.0017-02", re.IGNORECASE), "P23"),
+    (re.compile(r"угловая\s+анкерная|21\.0112-09", re.IGNORECASE), "YA23"),
+    (re.compile(r"концевая|21\.0112-04", re.IGNORECASE), "K21"),
+    (re.compile(r"(?<!\w)анкерная|25\.0017-08", re.IGNORECASE), "A23"),
+    (re.compile(r"угловая|25\.0017-06", re.IGNORECASE), "P23"),
+)
+WORK_TABLE_SUPPORT_TYPE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"УА23\*?|YA23", re.IGNORECASE), "YA23"),
+    (re.compile(r"УП23|UP23", re.IGNORECASE), "P23"),
+    (re.compile(r"К21|K21", re.IGNORECASE), "K21"),
+    (re.compile(r"А23|A23", re.IGNORECASE), "A23"),
+    (re.compile(r"П23|P23", re.IGNORECASE), "P23"),
+)
+WORK_TABLE_QUANTITY_COLUMN_INDEX = 4
 WORK_TABLE_MARKERS = (
     "Строительная длина линии",
     "Установка ж.б.опоры",
@@ -320,6 +340,32 @@ def convert_dwg_to_dxf_with_oda(
     )
 
 
+def find_placeholders_in_dwg_file(
+    source_path: Path,
+    work_dir: Path,
+    logger: Any | None = None,
+) -> list[str]:
+    source_path = Path(source_path)
+    work_dir = Path(work_dir)
+    if source_path.suffix.lower() == ".dxf":
+        return _find_placeholders_in_dxf(source_path)
+    dxf_path = work_dir / "temp" / f"{source_path.stem}_placeholders.dxf"
+    dxf_path.parent.mkdir(parents=True, exist_ok=True)
+    convert_dwg_to_dxf_with_oda(source_path, dxf_path, work_dir, logger=logger)
+    return _find_placeholders_in_dxf(dxf_path)
+
+
+def extract_text_from_dwg_file(
+    source_path: Path,
+    work_dir: Path,
+    logger: Any | None = None,
+) -> str:
+    from backend.core.note_validator import collect_plain_corpus, load_note_document
+
+    document = load_note_document(Path(source_path), Path(work_dir))
+    return collect_plain_corpus(document)
+
+
 def _replace_placeholders_in_dxf(
     source_dxf: Path,
     output_dxf: Path,
@@ -341,7 +387,7 @@ def _replace_placeholders_in_dxf(
             if formatted_text != cleaned_text:
                 cleaned_text = formatted_text
             if _is_title_page_mtext(cleaned_text):
-                cleaned_text = _raise_title_page_year_text(cleaned_text)
+                cleaned_text = _position_title_page_year_text(cleaned_text)
             if _is_body_note_mtext(cleaned_text):
                 _fit_body_note_mtext(entity, cleaned_text)
                 cleaned_text = _normalize_body_note_inline_heights(cleaned_text)
@@ -368,6 +414,7 @@ def _replace_placeholders_in_dxf(
     _fit_stamp_title_mtext_entities(document)
     _fix_work_table_support_quantities(document, replacement_map)
     _fix_climate_table_mtext_values(document, replacement_map)
+    _fix_supports_install_note_entities(document, replacement_map)
     _fix_toc_electro_item_alignment_entities(document)
     _left_align_equipment_footnote_entities(document)
 
@@ -380,10 +427,12 @@ def _replace_placeholders_in_dxf(
     _apply_sheet_count_replacements_raw(output_dxf, replacement_map)
     _fix_work_table_support_quantities_raw(output_dxf, replacement_map)
     _fix_climate_table_mtext_values_raw(output_dxf, replacement_map)
+    _fix_supports_install_note_raw(output_dxf, replacement_map)
     _fix_branch_armature_line_raw(output_dxf, replacement_map)
     _adjust_stamp_signature_positions_raw(output_dxf)
     _fix_labeled_spec_table_values_raw(output_dxf, replacement_map)
     _fix_sip4_spec_table_values_raw(output_dxf, replacement_map)
+    _apply_phase_breaker_replacements_raw(output_dxf, replacement_map)
     _cleanup_raw_dxf_text(output_dxf, replacement_map)
     _fix_sip4_numeric_width_raw(output_dxf, replacement_map)
     _fix_spec_certificate_text_heights_raw(output_dxf)
@@ -466,12 +515,67 @@ def _replace_placeholders_in_raw_dxf(path: Path, replacement_map: dict[str, str]
     return count
 
 
+def _apply_phase_breaker_replacements_raw(path: Path, replacement_map: dict[str, str] | None) -> None:
+    if not replacement_map:
+        return
+    original_text = path.read_text(encoding="utf-8", errors="replace")
+    updated = _apply_calculated_literal_replacements_acad_table_raw(original_text, replacement_map)
+    updated = _apply_calculated_literal_replacements_block_mtext_raw(updated, replacement_map)
+    updated = _apply_calculated_literal_replacements_table_group_codes_raw(updated, replacement_map)
+    if updated != original_text:
+        path.write_text(updated, encoding="utf-8")
+
+
+def _table_group_code_needs_phase_breaker_replacement(value: str) -> bool:
+    lowered = value.lower()
+    return (
+        "полюс" in lowered
+        or "ва47-29" in lowered
+        or "вa47-29" in lowered
+    )
+
+
+def _apply_calculated_literal_replacements_table_group_codes_raw(
+    text: str,
+    replacement_map: dict[str, str] | None,
+) -> str:
+    if not replacement_map:
+        return text
+
+    lines = text.splitlines()
+    changed = False
+    index = 0
+    while index < len(lines) - 1:
+        code = lines[index].strip()
+        if code not in {"1", "3", "302"}:
+            index += 1
+            continue
+        value = lines[index + 1]
+        if not _table_group_code_needs_phase_breaker_replacement(value):
+            index += 2
+            continue
+        cleaned = _apply_calculated_literal_replacements(value, replacement_map)
+        cleaned = _strip_table_inline_scales(cleaned)
+        if cleaned != value:
+            lines[index + 1] = cleaned
+            changed = True
+        index += 2
+
+    if not changed:
+        return text
+    suffix = "\n" if text.endswith("\n") else ""
+    return "\n".join(lines) + suffix
+
+
 def _cleanup_raw_dxf_text(path: Path, replacement_map: dict[str, str] | None = None) -> bool:
     original_text = path.read_text(encoding="utf-8", errors="replace")
     text = original_text
     cleaned_text = _apply_generated_text_cleanup_to_mtext_raw(text, replacement_map)
+    cleaned_text = _apply_calculated_literal_replacements_acad_table_raw(cleaned_text, replacement_map)
+    cleaned_text = _apply_calculated_literal_replacements_block_mtext_raw(cleaned_text, replacement_map)
+    cleaned_text = _apply_calculated_literal_replacements_table_group_codes_raw(cleaned_text, replacement_map)
     cleaned_text = _repair_mtext_continuation_group_codes_raw(cleaned_text)
-    cleaned_text = _raise_title_page_year_text_raw(cleaned_text)
+    cleaned_text = _position_title_page_year_text_raw(cleaned_text)
     cleaned_text = _apply_mtext_entity_fixes_raw(cleaned_text)
     cleaned_text = _normalize_body_note_heights_raw(cleaned_text)
     cleaned_text = _fit_specification_long_text_raw(cleaned_text)
@@ -665,7 +769,7 @@ def _apply_project_number_literal_replacements(text: str, replacement_map: dict[
 
 def _apply_address_literal_replacements(text: str, replacement_map: dict[str, str]) -> str:
     address = replacement_map.get("{{ADRESS}}") or replacement_map.get("{{ADDRESS}}") or ""
-    address = abbreviate_garden_partnership_terms(address)
+    address = abbreviate_address_display_terms(address)
     kad_number = replacement_map.get("{{KADNUMBER}}", "")
     project_number = replacement_map.get("{{PROJECTNUMBER}}", "")
     if not address:
@@ -774,13 +878,80 @@ def _apply_calculated_literal_replacements(text: str, replacement_map: dict[str,
 
     poles_text = replacement_map.get("{{BREAKER_POLES_TEXT}}", "")
     if poles_text:
-        result = re.sub(r"\b(?:трех|трёх|одно)полюсный\b", poles_text, result, flags=re.IGNORECASE)
+        result = re.sub(r"(?:трех|трёх|одно)полюсный", poles_text, result, flags=re.IGNORECASE)
 
     poles_text_genitive = replacement_map.get("{{BREAKER_POLES_TEXT_GENITIVE}}", "")
     if poles_text_genitive:
-        result = re.sub(r"\b(?:трех|трёх|одно)полюсного\b", poles_text_genitive, result, flags=re.IGNORECASE)
+        result = re.sub(r"(?:трех|трёх|одно)полюсного", poles_text_genitive, result, flags=re.IGNORECASE)
 
     return result
+
+
+def _apply_calculated_literal_replacements_to_text_pairs(
+    pairs: list[list[str]],
+    replacement_map: dict[str, str] | None,
+) -> bool:
+    if not replacement_map:
+        return False
+    changed = False
+    for pair in pairs:
+        if pair[0].strip() not in {"1", "302"}:
+            continue
+        cleaned = _apply_calculated_literal_replacements(pair[1], replacement_map)
+        cleaned = _strip_table_inline_scales(cleaned)
+        if cleaned != pair[1]:
+            pair[1] = cleaned
+            changed = True
+    return changed
+
+
+def _apply_calculated_literal_replacements_acad_table_raw(
+    text: str,
+    replacement_map: dict[str, str] | None,
+) -> str:
+    if not replacement_map:
+        return text
+
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+
+    def fix_table(match: re.Match[str]) -> str:
+        table_text = match.group(1)
+        if not _is_project_table_text(table_text):
+            return table_text
+        pairs, tail = _split_object_pairs(table_text)
+        if not _apply_calculated_literal_replacements_to_text_pairs(pairs, replacement_map):
+            return table_text
+        return _rebuild_dxf_object("ACAD_TABLE", pairs, tail, table_text)
+
+    return table_pattern.sub(fix_table, text)
+
+
+def _apply_calculated_literal_replacements_block_mtext_raw(
+    text: str,
+    replacement_map: dict[str, str] | None,
+) -> str:
+    if not replacement_map:
+        return text
+
+    block_pattern = re.compile(r"(^  0\nBLOCK\n.*?^  0\nENDBLK)", re.DOTALL | re.MULTILINE)
+    object_pattern = re.compile(r"(^  0\nMTEXT\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+
+    def fix_block(match: re.Match[str]) -> str:
+        block_text = match.group(1)
+        rebuilt = block_text
+        for object_match in object_pattern.finditer(block_text):
+            object_text = object_match.group(1)
+            pairs, tail = _split_object_pairs(object_text)
+            if not _apply_calculated_literal_replacements_to_text_pairs(pairs, replacement_map):
+                continue
+            rebuilt = rebuilt.replace(
+                object_text,
+                _rebuild_dxf_object("MTEXT", pairs, tail, object_text),
+                1,
+            )
+        return rebuilt
+
+    return block_pattern.sub(fix_block, text)
 
 
 def _apply_climate_literal_replacements(text: str, replacement_map: dict[str, str]) -> str:
@@ -918,7 +1089,21 @@ def _is_body_or_work_table_text(text: str) -> bool:
 
 def _is_spec_table_quantity_text(text: str) -> bool:
     plain = _plain_mtext(text).replace(",", ".").strip()
-    return bool(re.fullmatch(r"\d+(?:\.\d+)?", plain))
+    return _is_numeric_quantity_cell_text(plain)
+
+
+def _plain_numeric_token(text: str) -> str:
+    plain = _plain_mtext(text).replace(",", ".").strip()
+    return plain.lstrip("{").rstrip("}").lstrip("/")
+
+
+def _is_numeric_quantity_cell_text(text: str) -> bool:
+    plain = _plain_numeric_token(text)
+    if not plain:
+        return False
+    if re.fullmatch(r"\d+(?:\.\d+)?", plain):
+        return True
+    return bool(re.fullmatch(r"\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?", plain))
 
 
 def _is_dxf_numeric(value: str) -> bool:
@@ -1108,23 +1293,37 @@ def _format_body_note_text(text: str) -> str:
         else:
             formatted.append(_prepend_left_format(paragraph))
     text = r"\P".join(formatted)
+    text = _remove_empty_body_paragraphs_before_markers(text)
     return _tighten_general_notes_line_spacing(text)
 
 
-def _raise_title_page_year_text(text: str) -> str:
+def _position_title_page_year_text(text: str) -> str:
     if "2026г." not in text:
         return text
-    result = text
-    year_gap_pattern = re.compile(r"\\P(?=(?:\\H[\d.]+x?;)?2026г\.)")
-    for _ in range(TITLE_PAGE_YEAR_PARAGRAPH_TRIM):
-        updated = year_gap_pattern.sub("", result, count=1)
-        if updated == result:
-            break
-        result = updated
-    return result
+    gaps = r"\P" * TITLE_PAGE_YEAR_PARAGRAPH_GAPS
+    result = re.sub(
+        r"(\\H[\d.]+x?;)(?:\\P)+(?=2026г\.)",
+        r"\1",
+        text,
+    )
+    updated = re.sub(
+        r"(\\H[\d.]+x?;)(?=2026г\.)",
+        lambda match: match.group(1) + gaps,
+        result,
+        count=1,
+    )
+    if updated != result:
+        return updated
+    result = re.sub(r"(?:\\P)+(?=2026г\.)", "", text)
+    return re.sub(
+        r"(?=2026г\.)",
+        lambda _match: gaps,
+        result,
+        count=1,
+    )
 
 
-def _raise_title_page_year_text_raw(text: str) -> str:
+def _position_title_page_year_text_raw(text: str) -> str:
     object_pattern = re.compile(r"(^  0\nMTEXT\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
 
     def fix_object(match: re.Match[str]) -> str:
@@ -1138,7 +1337,7 @@ def _raise_title_page_year_text_raw(text: str) -> str:
         for pair in pairs:
             if pair[0].strip() not in {"1", "3"}:
                 continue
-            updated = _raise_title_page_year_text(pair[1])
+            updated = _position_title_page_year_text(pair[1])
             if updated != pair[1]:
                 pair[1] = updated
                 changed = True
@@ -1306,6 +1505,8 @@ def _apply_mtext_entity_fixes_raw(text: str) -> str:
         raw_text = _raw_text_content_from_object(object_text)
         if _is_title_page_mtext(raw_text):
             return object_text
+        if _is_equipment_footnote_mtext(raw_text):
+            return object_text
 
         pairs, tail = _split_object_pairs(object_text)
         stripped_changed = False
@@ -1360,6 +1561,9 @@ def _strip_table_inline_scales(text: str) -> str:
     text = re.sub(r"\\T[\d.]+;", "", text)
     text = re.sub(r"\\H[\d.]+x?;", "", text)
     text = re.sub(r"\{(\d+)\}", r"\1", text)
+    stripped = text.strip()
+    if stripped.startswith("{") and stripped.endswith("}") and "{" not in stripped[1:-1]:
+        return stripped[1:-1]
     return text
 
 
@@ -1406,6 +1610,26 @@ def _fit_breaker_mtext(entity: Any, text: str) -> str:
     text = _strip_table_inline_scales(text)
     entity.dxf.char_height = BREAKER_TEXT_HEIGHT
     return text
+
+
+def _remove_empty_body_paragraphs_before_markers(text: str) -> str:
+    paragraphs = text.split(r"\P")
+    cleaned: list[str] = []
+    index = 0
+    while index < len(paragraphs):
+        paragraph = paragraphs[index]
+        if not _plain_mtext(paragraph).strip():
+            next_index = index + 1
+            while next_index < len(paragraphs) and not _plain_mtext(paragraphs[next_index]).strip():
+                next_index += 1
+            if next_index < len(paragraphs):
+                next_plain = _plain_mtext(paragraphs[next_index]).strip()
+                if any(next_plain.startswith(marker) for marker in BODY_EMPTY_PARAGRAPH_NEXT_MARKERS):
+                    index = next_index
+                    continue
+        cleaned.append(paragraph)
+        index += 1
+    return r"\P".join(cleaned)
 
 
 def _fit_spec_table_quantity_mtext(entity: Any, text: str) -> str:
@@ -1467,6 +1691,240 @@ def _work_table_support_placeholder(marker: str) -> str | None:
     return WORK_TABLE_SUPPORT_MARKERS.get(marker.strip()) or WORK_TABLE_SUPPORT_MARKERS.get(normalized)
 
 
+def _work_table_support_field_name(marker: str) -> str | None:
+    placeholder = _work_table_support_placeholder(marker)
+    if not placeholder:
+        return None
+    match = re.fullmatch(r"\{\{([A-Z0-9_]+)\}\}", placeholder)
+    return match.group(1) if match else None
+
+
+def _dedupe_table_cell_text(text: str) -> str:
+    plain = _plain_mtext(text).strip()
+    if not plain:
+        return ""
+    chunks = re.split(r"\s{2,}", plain)
+    if len(chunks) >= 2 and chunks[0] == chunks[1]:
+        return chunks[0]
+    midpoint = len(plain) // 2
+    if midpoint > 0:
+        left = plain[:midpoint].strip()
+        right = plain[midpoint:].strip()
+        if left and left == right:
+            return left
+    return plain
+
+
+def _work_table_support_field_for_row(row_cells: list[str]) -> str | None:
+    if not row_cells:
+        return None
+
+    name = _dedupe_table_cell_text(row_cells[1] if len(row_cells) > 1 else "")
+    if re.search(r"всего\s+опор", name, flags=re.IGNORECASE):
+        return "S"
+
+    type_text = _dedupe_table_cell_text(row_cells[2] if len(row_cells) > 2 else "")
+    field_name = _work_table_support_field_name(type_text)
+    if field_name:
+        return field_name
+    for pattern, field in WORK_TABLE_SUPPORT_TYPE_PATTERNS:
+        if pattern.search(type_text):
+            return field
+    for pattern, field in WORK_TABLE_SUPPORT_NAME_PATTERNS:
+        if pattern.search(name):
+            return field
+    return None
+
+
+def _work_table_support_replacement_value(field_name: str, replacement_map: dict[str, str]) -> str:
+    value = replacement_map.get(f"{{{{{field_name}}}}}", "")
+    if value != "":
+        return str(value)
+    if field_name in {"P23", "A23", "YA23", "K21", "S", "GROUND"}:
+        return "0"
+    return ""
+
+
+def _is_work_volume_table_text(table_text: str) -> bool:
+    plain = _plain_mtext(table_text)
+    return any(marker in plain for marker in WORK_TABLE_MARKERS)
+
+
+def _acad_table_dimension_pair_indexes(
+    pairs: list[list[str]],
+) -> tuple[int, int, list[int], list[int]] | None:
+    table_index = next(
+        (index for index, (_, value) in enumerate(pairs) if value == "AcDbTable"),
+        None,
+    )
+    if table_index is None:
+        return None
+
+    row_count: int | None = None
+    col_count: int | None = None
+    for index in range(table_index + 1, min(len(pairs), table_index + 40)):
+        code = pairs[index][0].strip()
+        if code == "91" and row_count is None:
+            try:
+                candidate = int(pairs[index][1])
+            except ValueError:
+                continue
+            if candidate > 0:
+                row_count = candidate
+        elif code == "92" and col_count is None and row_count is not None:
+            try:
+                candidate = int(pairs[index][1])
+            except ValueError:
+                continue
+            if candidate > 0:
+                col_count = candidate
+                break
+
+    if not row_count or not col_count:
+        return None
+
+    height_indexes = [index for index, (code, _) in enumerate(pairs) if code.strip() == "141"]
+    width_indexes = [index for index, (code, _) in enumerate(pairs) if code.strip() == "142"]
+    if len(height_indexes) != row_count or len(width_indexes) != col_count:
+        return None
+    return row_count, col_count, height_indexes, width_indexes
+
+
+def _extract_work_table_row_cell_texts(
+    pairs: list[list[str]],
+    row_count: int,
+    col_count: int,
+) -> list[list[str]]:
+    rows: list[list[str]] = [[] for _ in range(row_count)]
+    current_row = 0
+    current_col = 0
+    collecting = False
+    cell_parts: list[str] = []
+
+    for code, value in pairs:
+        if value == "CELL_VALUE":
+            collecting = True
+            cell_parts = []
+            continue
+        if collecting and value == "ACVALUE_END":
+            if current_row < row_count and len(rows[current_row]) < col_count:
+                rows[current_row].append(" ".join(cell_parts).strip())
+            current_col += 1
+            if current_col >= col_count:
+                current_col = 0
+                current_row += 1
+            collecting = False
+            continue
+        if collecting and code.strip() == "1":
+            cell_parts.append(value)
+        elif collecting and code.strip() == "302" and not cell_parts:
+            cell_parts.append(value)
+
+    return rows
+
+
+def _set_acad_table_cell_text_pairs(
+    pairs: list[list[str]],
+    cell_start: int,
+    cell_end: int,
+    new_value: str,
+) -> bool:
+    primary_index: int | None = None
+    fallback_index: int | None = None
+    for index in range(cell_start + 1, cell_end):
+        code = pairs[index][0].strip()
+        if code == "1":
+            primary_index = index
+            break
+        if code == "302" and fallback_index is None:
+            fallback_index = index
+
+    if primary_index is None and fallback_index is not None:
+        pairs[fallback_index][1] = new_value
+        pairs.insert(fallback_index, ["1", new_value])
+        return True
+    if primary_index is None:
+        pairs.insert(cell_end, ["1", new_value])
+        return True
+
+    changed = False
+    for index in range(cell_start + 1, cell_end):
+        if pairs[index][0].strip() not in {"1", "302"}:
+            continue
+        if pairs[index][1] != new_value:
+            pairs[index][1] = new_value
+            changed = True
+    return changed
+
+
+def _update_work_table_support_quantities_in_pairs(
+    pairs: list[list[str]],
+    row_count: int,
+    col_count: int,
+    replacement_map: dict[str, str],
+) -> bool:
+    row_texts = _extract_work_table_row_cell_texts(pairs, row_count, col_count)
+    cell_targets: dict[tuple[int, int], str] = {}
+    for row_index, row_cells in enumerate(row_texts):
+        field_name = _work_table_support_field_for_row(row_cells)
+        if not field_name:
+            continue
+        value = _work_table_support_replacement_value(field_name, replacement_map)
+        if value == "":
+            continue
+        cell_targets[(row_index, WORK_TABLE_QUANTITY_COLUMN_INDEX)] = value
+
+    if not cell_targets:
+        return False
+
+    changed = False
+    current_row = 0
+    current_col = 0
+    cell_start: int | None = None
+    for index, (_, value) in enumerate(pairs):
+        if value == "CELL_VALUE":
+            cell_start = index
+            continue
+        if cell_start is None or value != "ACVALUE_END":
+            continue
+
+        target_value = cell_targets.get((current_row, current_col))
+        if target_value is not None:
+            changed = _set_acad_table_cell_text_pairs(pairs, cell_start, index, target_value) or changed
+
+        current_col += 1
+        if current_col >= col_count:
+            current_col = 0
+            current_row += 1
+        cell_start = None
+
+    return changed
+
+
+def _fix_work_table_support_quantities_in_acad_tables_raw(text: str, replacement_map: dict[str, str]) -> str:
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+
+    def fix_table(match: re.Match[str]) -> str:
+        table_text = match.group(1)
+        if not _is_work_volume_table_text(table_text):
+            return table_text
+        pairs, tail = _split_object_pairs(table_text)
+        dimensions = _acad_table_dimension_pair_indexes(pairs)
+        if dimensions is None:
+            return table_text
+        row_count, col_count, _, _ = dimensions
+        if not _update_work_table_support_quantities_in_pairs(
+            pairs,
+            row_count,
+            col_count,
+            replacement_map,
+        ):
+            return table_text
+        return _rebuild_dxf_object("ACAD_TABLE", pairs, tail, table_text)
+
+    return table_pattern.sub(fix_table, text)
+
+
 def _fix_work_table_support_quantities(document: Any, replacement_map: dict[str, str] | None) -> None:
     if not replacement_map:
         return
@@ -1480,6 +1938,14 @@ def _fix_work_table_support_quantities(document: Any, replacement_map: dict[str,
             if not placeholder:
                 continue
             value = replacement_map.get(placeholder, "")
+            if value == "" and placeholder in {
+                "{{P23}}",
+                "{{A23}}",
+                "{{YA23}}",
+                "{{K21}}",
+                "{{S}}",
+            }:
+                value = "0"
             if not value:
                 continue
             for next_entity in entities[index + 1 :]:
@@ -1528,6 +1994,95 @@ def _fix_climate_table_mtext_values(document: Any, replacement_map: dict[str, st
                         _replace_raw_content_value(text, str(replacement), value_kind),
                     )
                     break
+
+
+def _replace_supports_install_note_text(raw_value: str, supports_note: str) -> str:
+    return re.sub(r"по\s+\d+\s+опорам", supports_note, raw_value, flags=re.IGNORECASE)
+
+
+def _fix_supports_install_note_entities(document: Any, replacement_map: dict[str, str] | None) -> None:
+    if not replacement_map:
+        return
+    supports_note = replacement_map.get("{{SUPPORTS_INSTALL_NOTE}}", "")
+    if not supports_note:
+        return
+    for block in document.blocks:
+        if not block.name.startswith("*T"):
+            continue
+        for entity in block:
+            if entity.dxftype() != "MTEXT":
+                continue
+            text = _get_text(entity)
+            if not re.search(r"по\s+\d+\s+опорам", text, flags=re.IGNORECASE):
+                continue
+            updated = _replace_supports_install_note_text(text, supports_note)
+            if updated != text:
+                _set_text(entity, updated)
+
+
+def _fix_supports_install_note_raw(path: Path, replacement_map: dict[str, str] | None) -> None:
+    if not replacement_map:
+        return
+    supports_note = replacement_map.get("{{SUPPORTS_INSTALL_NOTE}}", "")
+    if not supports_note:
+        return
+
+    original_text = path.read_text(encoding="utf-8", errors="replace")
+    text = _replace_supports_install_note_in_acad_tables_raw(original_text, supports_note)
+    block_pattern = re.compile(r"(^  0\nBLOCK\n.*?^  0\nENDBLK)", re.DOTALL | re.MULTILINE)
+    object_pattern = re.compile(r"(^  0\nMTEXT\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+
+    def fix_block(match: re.Match[str]) -> str:
+        block_text = match.group(1)
+        if not re.search(r"по\s+\d+\s+опорам", block_text, flags=re.IGNORECASE):
+            return block_text
+        rebuilt = block_text
+        for object_match in object_pattern.finditer(block_text):
+            object_text = object_match.group(1)
+            pairs, tail = _split_object_pairs(object_text)
+            changed = False
+            for pair in pairs:
+                if pair[0].strip() not in {"1", "3", "302"}:
+                    continue
+                updated = _replace_supports_install_note_text(pair[1], supports_note)
+                if updated != pair[1]:
+                    pair[1] = updated
+                    changed = True
+            if changed:
+                rebuilt = rebuilt.replace(
+                    object_text,
+                    _rebuild_dxf_object("MTEXT", pairs, tail, object_text),
+                    1,
+                )
+        return rebuilt
+
+    text = block_pattern.sub(fix_block, text)
+    text = re.sub(r"по\s+\d+\s+опорам", supports_note, text, flags=re.IGNORECASE)
+    if text != original_text:
+        path.write_text(text, encoding="utf-8")
+
+
+def _replace_supports_install_note_in_acad_tables_raw(text: str, supports_note: str) -> str:
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+
+    def fix_table(match: re.Match[str]) -> str:
+        table_text = match.group(1)
+        if not re.search(r"по\s+\d+\s+опорам", table_text, flags=re.IGNORECASE):
+            return table_text
+        pairs, tail = _split_object_pairs(table_text)
+        changed = False
+        for index, (code, raw_value) in enumerate(pairs):
+            if code.strip() not in {"1", "302"}:
+                continue
+            updated = _replace_supports_install_note_text(raw_value, supports_note)
+            if updated != raw_value:
+                pairs[index][1] = updated
+                changed = True
+        if not changed:
+            return table_text
+        return _rebuild_dxf_object("ACAD_TABLE", pairs, tail, table_text)
+
+    return table_pattern.sub(fix_table, text)
 
 
 def _toc_electro_item_plain(text: str) -> str:
@@ -1619,7 +2174,7 @@ def _normalize_spec_table_quantity_heights_raw(text: str) -> str:
     def fix_object(match: re.Match[str]) -> str:
         object_text = match.group(1)
         plain = _plain_mtext(_raw_text_content_from_object(object_text)).replace(",", ".").strip()
-        if not re.fullmatch(r"\d+(?:\.\d+)?", plain):
+        if not _is_numeric_quantity_cell_text(plain):
             return object_text
 
         height_match = re.search(r"\n 40\n([-+]?\d+(?:\.\d+)?)", object_text)
@@ -1654,20 +2209,23 @@ def _fix_acad_table_numeric_cell_pairs(pairs: list[list[str]]) -> None:
         index for index, (_, value) in enumerate(pairs) if value == "CELL_VALUE"
     ]
     for cell_value_index in reversed(cell_value_indexes):
-        value_indexes = _numeric_cell_value_pair_indexes(pairs, cell_value_index)
-        if not value_indexes:
+        if not _cell_contains_numeric_quantity(pairs, cell_value_index):
             continue
-        height_index = _cell_text_height_pair_before_cell_value(pairs, cell_value_index)
+        height_index = _cell_text_height_pair_in_cell_value(pairs, cell_value_index)
+        if height_index is None:
+            height_index = _cell_text_height_pair_before_cell_value(pairs, cell_value_index)
         if height_index is None:
             cell_value_index = _insert_cell_text_height_pair(pairs, cell_value_index)
         else:
             pairs[height_index][1] = f"{BODY_TEXT_HEIGHT:.1f}"
             cell_value_index = _canonicalize_cell_text_height_pair(pairs, cell_value_index)
-            height_index = _cell_text_height_pair_before_cell_value(pairs, cell_value_index)
+            height_index = _cell_text_height_pair_in_cell_value(pairs, cell_value_index)
+            if height_index is None:
+                height_index = _cell_text_height_pair_before_cell_value(pairs, cell_value_index)
             if height_index is not None:
                 pairs[height_index][1] = f"{BODY_TEXT_HEIGHT:.1f}"
         _ensure_cell_text_height_override_flag(pairs, cell_value_index)
-        for value_index in _numeric_cell_value_pair_indexes(pairs, cell_value_index):
+        for value_index in _cell_text_value_pair_indexes(pairs, cell_value_index):
             code, raw_value = pairs[value_index]
             if code.strip() not in {"1", "302"}:
                 continue
@@ -1675,12 +2233,15 @@ def _fix_acad_table_numeric_cell_pairs(pairs: list[list[str]]) -> None:
 
 
 def _insert_cell_text_height_pair(pairs: list[list[str]], cell_value_index: int) -> int:
-    align_index = _cell_alignment_pair_index_before_cell_value(pairs, cell_value_index)
-    insert_at = align_index + 1 if align_index is not None else cell_value_index
+    for index in range(cell_value_index + 1, min(len(pairs), cell_value_index + 12)):
+        if pairs[index][0].strip() == "170":
+            pairs.insert(index + 1, ["140", f"{BODY_TEXT_HEIGHT:.1f}"])
+            if index + 1 <= cell_value_index:
+                return cell_value_index + 1
+            return cell_value_index
+    insert_at = cell_value_index + 1
     pairs.insert(insert_at, ["140", f"{BODY_TEXT_HEIGHT:.1f}"])
-    if insert_at <= cell_value_index:
-        cell_value_index += 1
-    return cell_value_index
+    return cell_value_index + 1
 
 
 def _canonicalize_cell_text_height_pair(pairs: list[list[str]], cell_value_index: int) -> int:
@@ -1734,16 +2295,48 @@ def _cell_alignment_pair_index_before_cell_value(pairs: list[list[str]], cell_va
 
 def _numeric_cell_value_pair_indexes(pairs: list[list[str]], cell_value_index: int) -> list[int]:
     indexes: list[int] = []
+    for index in _cell_text_value_pair_indexes(pairs, cell_value_index):
+        code, raw_value = pairs[index]
+        plain = _plain_numeric_token(raw_value)
+        if _is_numeric_quantity_cell_text(plain):
+            indexes.append(index)
+    return indexes
+
+
+def _cell_text_value_pair_indexes(pairs: list[list[str]], cell_value_index: int) -> list[int]:
+    indexes: list[int] = []
     for index in range(cell_value_index + 1, min(len(pairs), cell_value_index + 24)):
         code, raw_value = pairs[index]
         if raw_value in {"ACVALUE_END", "CELLCONTENT_BEGIN", "CELL_VALUE"}:
             break
-        if code.strip() not in {"1", "302"}:
-            continue
-        plain = _plain_mtext(raw_value).replace(",", ".").strip()
-        if re.fullmatch(r"\d+(?:\.\d+)?", plain):
+        if code.strip() in {"1", "302"}:
             indexes.append(index)
     return indexes
+
+
+def _cell_contains_numeric_quantity(pairs: list[list[str]], cell_value_index: int) -> bool:
+    indexes = _cell_text_value_pair_indexes(pairs, cell_value_index)
+    if not indexes:
+        return False
+
+    combined = "".join(_plain_mtext(pairs[index][1]) for index in indexes).replace(",", ".").strip()
+    if _is_numeric_quantity_cell_text(combined):
+        return True
+
+    return any(
+        _is_numeric_quantity_cell_text(_plain_numeric_token(pairs[index][1]))
+        for index in indexes
+    )
+
+
+def _cell_text_height_pair_in_cell_value(pairs: list[list[str]], cell_value_index: int) -> int | None:
+    for index in range(cell_value_index + 1, min(len(pairs), cell_value_index + 24)):
+        code, value = pairs[index]
+        if value == "ACVALUE_END":
+            break
+        if code.strip() == "140":
+            return index
+    return None
 
 
 def _cell_text_height_pair_before_cell_value(pairs: list[list[str]], cell_value_index: int) -> int | None:
@@ -1758,22 +2351,12 @@ def _cell_text_height_pair_before_cell_value(pairs: list[list[str]], cell_value_
 
 def _raw_text_content_from_object(object_text: str) -> str:
     pairs, _ = _split_object_pairs(object_text)
-    return r"\P".join(value for code, value in pairs if code.strip() in {"1", "3"})
+    return "".join(value for code, value in pairs if code.strip() in {"1", "3"})
 
 
 def _normalize_small_inline_heights(text: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        raw_value = match.group(1)
-        suffix = match.group(2) or ""
-        try:
-            value = float(raw_value)
-        except ValueError:
-            return match.group(0)
-        if suffix.lower() == "x":
-            return r"\H1.0x;" if abs(value - 1.0) > 0.001 else match.group(0)
-        return rf"\H{BODY_TEXT_HEIGHT:g};" if value < 5 and abs(value - BODY_TEXT_HEIGHT) > 0.001 else match.group(0)
-
-    return re.sub(r"\\H(\d+(?:\.\d+)?)(x?);", replace, text)
+    text = re.sub(r"\\H[\d.]+x?;", "", text)
+    return text
 
 
 def _raise_stamp_signature_text(document: Any) -> None:
@@ -1967,6 +2550,14 @@ def _fix_work_table_support_quantities_raw(path: Path, replacement_map: dict[str
             if not placeholder:
                 continue
             value = replacement_map.get(placeholder, "")
+            if value == "" and placeholder in {
+                "{{P23}}",
+                "{{A23}}",
+                "{{YA23}}",
+                "{{K21}}",
+                "{{S}}",
+            }:
+                value = "0"
             if not value:
                 continue
             for next_object in objects[index + 1 :]:
@@ -1988,6 +2579,7 @@ def _fix_work_table_support_quantities_raw(path: Path, replacement_map: dict[str
         return rebuilt
 
     updated = block_pattern.sub(fix_block, original_text)
+    updated = _fix_work_table_support_quantities_in_acad_tables_raw(updated, replacement_map)
     if updated != original_text:
         path.write_text(updated, encoding="utf-8")
 
@@ -2054,16 +2646,7 @@ def _normalize_numeric_table_cell_heights_raw(text: str) -> str:
 
 
 def _cell_value_is_numeric(pairs: list[list[str]], start: int) -> bool:
-    for index in range(start, min(len(pairs), start + 24)):
-        code, raw_value = pairs[index]
-        if raw_value == "ACVALUE_END":
-            return False
-        if code.strip() not in {"1", "302"}:
-            continue
-        plain = _plain_mtext(raw_value).replace(",", ".").strip()
-        if re.fullmatch(r"\d+(?:\.\d+)?", plain):
-            return True
-    return False
+    return _cell_contains_numeric_quantity(pairs, start)
 
 
 def _previous_cell_height_pair(pairs: list[list[str]], start: int) -> int | None:
@@ -2367,11 +2950,10 @@ def _update_sheet_count_entities(document: Any, replacement_map: dict[str, str] 
     if not replacement_map:
         return
     route_sheet = replacement_map.get("{{ROUTE_PLAN_SHEET}}", "")
-    total_sheets = replacement_map.get("{{TOTAL_SHEETS}}", "")
+    total_sheets = str(replacement_map.get("{{TOTAL_SHEETS}}", "") or "")
     if route_sheet:
         _update_route_plan_sheet_entities(document, route_sheet)
-    if total_sheets:
-        _update_total_sheet_stamp_entities(document, str(total_sheets))
+    _update_total_sheet_stamp_entities(document, total_sheets)
 
 
 def _update_route_plan_sheet_entities(document: Any, route_sheet: str) -> None:
@@ -2423,6 +3005,8 @@ def _update_route_plan_sheet_entities(document: Any, route_sheet: str) -> None:
 
 
 def _update_total_sheet_stamp_entities(document: Any, total_sheets: str) -> None:
+    if not total_sheets:
+        return
     for insert in document.modelspace().query("INSERT"):
         if insert.dxf.name not in STAMP_BLOCK_NAMES:
             continue
@@ -2449,17 +3033,13 @@ def _apply_sheet_count_replacements_raw(path: Path, replacement_map: dict[str, s
     if not replacement_map:
         return
     route_sheet = replacement_map.get("{{ROUTE_PLAN_SHEET}}", "")
-    total_sheets = replacement_map.get("{{TOTAL_SHEETS}}", "")
-    if not route_sheet and not total_sheets:
-        return
-
+    total_sheets = str(replacement_map.get("{{TOTAL_SHEETS}}", "") or "")
     original_text = path.read_text(encoding="utf-8", errors="replace")
     text = original_text
     if route_sheet:
         text = _replace_route_plan_sheet_table_cells_raw(text, route_sheet)
         text = _replace_route_plan_sheet_mtext_blocks_raw(text, route_sheet)
-    if total_sheets:
-        text = _replace_stamp_total_sheets_raw(text, total_sheets)
+    text = _replace_stamp_total_sheets_raw(text, total_sheets)
     if text != original_text:
         path.write_text(text, encoding="utf-8")
 
@@ -2528,6 +3108,8 @@ def _replace_route_plan_sheet_mtext_blocks_raw(text: str, route_sheet: str) -> s
 
 
 def _replace_stamp_total_sheets_raw(text: str, total_sheets: str) -> str:
+    if not total_sheets:
+        return text
     lines = text.splitlines()
     insert_positions: list[tuple[int, float, float]] = []
     for index, line in enumerate(lines):
@@ -2587,7 +3169,9 @@ def _replace_stamp_total_sheets_raw(text: str, total_sheets: str) -> str:
                 best_distance = distance
         if best is None:
             continue
-        text_index, _ = best
+        text_index, current_value = best
+        if current_value == total_sheets:
+            continue
         value_line_index = text_index + 1
         while value_line_index < len(lines) and lines[value_line_index].strip() != "1":
             value_line_index += 1
@@ -2722,7 +3306,7 @@ def _mtext_text_pair_index(pairs: list[list[str]]) -> int | None:
 def _is_numeric_table_cell(raw_value: str) -> bool:
     plain = _plain_mtext(raw_value).replace(",", ".").strip()
     plain = plain.lstrip("{").rstrip("}")
-    return bool(re.fullmatch(r"\d+(?:\.\d+)?", plain))
+    return _is_numeric_quantity_cell_text(plain)
 
 
 def _format_table_number_like_old(old_raw: str, new_value: str) -> str:
@@ -3054,17 +3638,10 @@ def _is_equipment_footnote_mtext(text: str) -> bool:
 
 
 def _format_equipment_footnote_text(text: str) -> str:
-    paragraphs = text.split(r"\P")
-    formatted: list[str] = []
-    for paragraph in paragraphs:
-        if not paragraph.strip():
-            formatted.append(paragraph)
-            continue
-        if re.match(r"\\px[^;\\]+;", paragraph.lstrip()):
-            formatted.append(_paragraph_format_to_left(paragraph))
-            continue
-        formatted.append(rf"\pxql;{paragraph.lstrip()}")
-    return r"\P".join(formatted)
+    stripped = text.lstrip()
+    if stripped.startswith(r"\px"):
+        return text
+    return rf"\pxql;{stripped}"
 
 
 def _left_align_equipment_footnote_entities(document: Any) -> None:
@@ -3074,6 +3651,12 @@ def _left_align_equipment_footnote_entities(document: Any) -> None:
         text = _get_text(entity)
         if not _is_equipment_footnote_mtext(text):
             continue
+        attachment = int(entity.dxf.attachment_point)
+        width = float(getattr(entity.dxf, "width", 0) or 0)
+        if attachment == 4 and width > 0:
+            insert = entity.dxf.insert
+            entity.dxf.attachment_point = 5
+            entity.dxf.insert = (insert.x + width / 2, insert.y, insert.z)
         fixed_text = _format_equipment_footnote_text(text)
         if fixed_text != text:
             _set_text(entity, fixed_text)
@@ -3096,6 +3679,7 @@ def _left_align_equipment_footnote_raw(path: Path) -> None:
         text_indexes = [
             index for index, (code, _) in enumerate(pairs) if code.strip() in {"1", "3"}
         ]
+        changed = False
         for index, (code, value) in enumerate(pairs):
             stripped = code.strip()
             if stripped == "41":
@@ -3111,11 +3695,15 @@ def _left_align_equipment_footnote_raw(path: Path) -> None:
                 current_x = float(pairs[insert_index][1])
                 pairs[attachment_index][1] = "5"
                 pairs[insert_index][1] = str(current_x + width / 2)
+                changed = True
 
         fixed_text = _format_equipment_footnote_text(raw_text)
-        if text_indexes:
+        if fixed_text != raw_text and text_indexes:
             _assign_mtext_dxf_chunks(pairs, fixed_text)
+            changed = True
 
+        if not changed:
+            return object_text
         return _rebuild_dxf_object("MTEXT", pairs, tail, object_text)
 
     updated = object_pattern.sub(fix_object, original_text)

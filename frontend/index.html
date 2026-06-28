@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Автоматизация ТУ</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260621" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260623" />
   </head>
   <body data-theme="dark">
     <div class="page-bg" aria-hidden="true"></div>
@@ -16,6 +16,7 @@
           <div class="system-status" data-i18n="systemStatus">Инженерная система подготовки документации</div>
         </div>
         <div class="top-actions">
+          <button class="top-control liquid-control" id="openCheckPanel" type="button" data-i18n="checkPanelOpen">Проверка</button>
           <button class="top-control liquid-control" id="themeToggle" type="button" data-i18n="themeLight">Светлая тема</button>
           <div class="language-picker liquid-control" id="languagePicker">
             <button
@@ -227,6 +228,61 @@
       </button>
     </nav>
 
-    <script src="/static/script.js?v=20260622"></script>
+    <div class="check-panel-backdrop" id="checkPanelBackdrop" hidden></div>
+    <aside class="check-panel glass" id="checkPanel" aria-hidden="true" aria-labelledby="checkPanelTitle">
+      <div class="check-panel__head">
+        <div>
+          <p class="check-panel__eyebrow" data-i18n="checkPanelEyebrow">Предварительная проверка</p>
+          <h2 class="check-panel__title" id="checkPanelTitle" data-i18n="checkPanelTitle">Проверка исходных файлов</h2>
+        </div>
+        <button class="check-panel__close liquid-control" id="closeCheckPanel" type="button" aria-label="Закрыть" data-i18n-aria="checkPanelClose">×</button>
+      </div>
+
+      <p class="check-panel__copy" data-i18n="checkPanelCopy">
+        Загрузите ТУ, план и пояснительную записку. Система проверит извлекаемые данные, опоры на плане и placeholders в записке.
+      </p>
+
+      <label class="check-panel__reuse">
+        <input id="useMainFormFiles" type="checkbox" checked />
+        <span data-i18n="checkPanelReuse">Использовать файлы из основной формы, если они уже выбраны</span>
+      </label>
+
+      <form class="check-panel__form" id="checkForm">
+        <label class="upload-control liquid-control" for="checkTuFile" data-empty="true">
+          <input id="checkTuFile" name="tu_file" type="file" accept=".docx,.pdf" />
+          <span class="upload-label" data-i18n="tuUpload">ТУ DOCX/PDF</span>
+          <span class="upload-name" id="checkTuName" data-empty="true">Файл не выбран</span>
+        </label>
+
+        <label class="upload-control liquid-control" for="checkPlanFile" data-empty="true">
+          <input id="checkPlanFile" name="plan_file" type="file" accept=".dxf,.dwg" />
+          <span class="upload-label" data-i18n="planUpload">План DWG/DXF</span>
+          <span class="upload-name" id="checkPlanName" data-empty="true">Файл не выбран</span>
+        </label>
+
+        <label class="upload-control liquid-control" for="checkNoteFile" data-empty="true">
+          <input id="checkNoteFile" name="note_file" type="file" accept=".dwg,.dxf" />
+          <span class="upload-label" data-i18n="checkNoteUpload">Записка DWG/DXF</span>
+          <span class="upload-name" id="checkNoteName" data-empty="true">Файл не выбран</span>
+        </label>
+
+        <p class="check-panel__hint" data-i18n="checkPanelNoteHint">
+          Если записку не загрузить, будет проверен эталонный шаблон, который система выберет автоматически.
+        </p>
+
+        <button class="check-panel__submit liquid-control" id="runCheckButton" type="submit" data-i18n="checkPanelRun">Проверить</button>
+      </form>
+
+      <div class="check-panel__results" id="checkResults" hidden>
+        <div class="check-panel__summary" id="checkSummary"></div>
+        <div class="check-panel__armature" id="checkArmature" hidden>
+          <p class="check-panel__armature-title" data-i18n="checkArmatureTitle">Расчёт арматуры по плану</p>
+          <ul class="check-armature-list" id="checkArmatureList"></ul>
+        </div>
+        <ul class="check-issue-list" id="checkIssueList"></ul>
+      </div>
+    </aside>
+
+    <script src="/static/script.js?v=20260627"></script>
   </body>
 </html>

@@ -28,6 +28,24 @@ const languageMenu = document.querySelector("#languageMenu");
 const languageFlag = document.querySelector("#languageFlag");
 const languageName = document.querySelector("#languageName");
 const languageOptions = [...document.querySelectorAll("#languageMenu .language-picker__option")];
+const openCheckPanel = document.querySelector("#openCheckPanel");
+const closeCheckPanel = document.querySelector("#closeCheckPanel");
+const checkPanel = document.querySelector("#checkPanel");
+const checkPanelBackdrop = document.querySelector("#checkPanelBackdrop");
+const checkForm = document.querySelector("#checkForm");
+const useMainFormFiles = document.querySelector("#useMainFormFiles");
+const checkTuFile = document.querySelector("#checkTuFile");
+const checkPlanFile = document.querySelector("#checkPlanFile");
+const checkNoteFile = document.querySelector("#checkNoteFile");
+const checkTuName = document.querySelector("#checkTuName");
+const checkPlanName = document.querySelector("#checkPlanName");
+const checkNoteName = document.querySelector("#checkNoteName");
+const runCheckButton = document.querySelector("#runCheckButton");
+const checkResults = document.querySelector("#checkResults");
+const checkSummary = document.querySelector("#checkSummary");
+const checkArmature = document.querySelector("#checkArmature");
+const checkArmatureList = document.querySelector("#checkArmatureList");
+const checkIssueList = document.querySelector("#checkIssueList");
 
 const LANGUAGE_META = {
   ru: { flag: "🇷🇺", name: "Русский" },
@@ -112,6 +130,32 @@ const translations = {
     checkLog: "Проверьте log.txt.",
     success: "Пояснительная записка сформирована. Поля заменены.",
     pdfUnavailable: "PDF пока недоступен.",
+    checkPanelOpen: "Проверка",
+    checkPanelClose: "Закрыть",
+    checkPanelEyebrow: "Предварительная проверка",
+    checkPanelTitle: "Проверка исходных файлов",
+    checkPanelCopy: "Загрузите ТУ, план и пояснительную записку. Система проверит извлекаемые данные, опоры на плане и placeholders в записке.",
+    checkPanelReuse: "Использовать файлы из основной формы, если они уже выбраны",
+    checkNoteUpload: "Записка DWG/DXF",
+    checkPanelNoteHint: "Если записку не загрузить, будет проверен эталонный шаблон, который система выберет автоматически.",
+    checkPanelRun: "Проверить",
+    checkPanelRunning: "Проверка...",
+    validationCheckTu: "Выберите файл ТУ для проверки.",
+    validationCheckPlan: "Выберите файл плана для проверки.",
+    checkSummaryReady: "Критичных ошибок не найдено.",
+    checkSummaryWarningsOnly: "Критичных ошибок нет. Предупреждений: {warnings}.",
+    checkSummaryIssues: "Найдено ошибок: {errors}, предупреждений: {warnings}.",
+    checkCategoryTu: "ТУ",
+    checkCategoryPlan: "План",
+    checkCategoryNote: "Записка",
+    checkCategoryCross: "Связка",
+    checkCategoryWire: "Провод",
+    checkCategoryProject: "Проект",
+    checkCategoryArmature: "Арматура",
+    checkArmatureTitle: "Расчёт арматуры по плану",
+    checkSeverityError: "Ошибка",
+    checkSeverityWarning: "Внимание",
+    checkSeverityInfo: "Инфо",
   },
   en: {
     brand: "TU Automation",
@@ -177,6 +221,32 @@ const translations = {
     checkLog: "Check log.txt.",
     success: "The note has been generated. Placeholders were replaced.",
     pdfUnavailable: "PDF is not available yet.",
+    checkPanelOpen: "Validate",
+    checkPanelClose: "Close",
+    checkPanelEyebrow: "Pre-flight check",
+    checkPanelTitle: "Validate source files",
+    checkPanelCopy: "Upload TU, plan, and note. The system checks extracted data, plan supports, and note placeholders.",
+    checkPanelReuse: "Use files from the main form when already selected",
+    checkNoteUpload: "Note DWG/DXF",
+    checkPanelNoteHint: "If no note is uploaded, the auto-selected template will be checked instead.",
+    checkPanelRun: "Validate",
+    checkPanelRunning: "Validating...",
+    validationCheckTu: "Choose a TU file for validation.",
+    validationCheckPlan: "Choose a plan file for validation.",
+    checkSummaryReady: "No critical errors found.",
+    checkSummaryWarningsOnly: "No critical errors. Warnings: {warnings}.",
+    checkSummaryIssues: "Errors: {errors}, warnings: {warnings}.",
+    checkCategoryTu: "TU",
+    checkCategoryPlan: "Plan",
+    checkCategoryNote: "Note",
+    checkCategoryCross: "Cross-check",
+    checkCategoryWire: "Wire",
+    checkCategoryProject: "Project",
+    checkCategoryArmature: "Armature",
+    checkArmatureTitle: "Armature calculation from plan",
+    checkSeverityError: "Error",
+    checkSeverityWarning: "Warning",
+    checkSeverityInfo: "Info",
   },
   de: {
     brand: "TU-Automatisierung",
@@ -241,6 +311,32 @@ const translations = {
     checkLog: "Prufen Sie log.txt.",
     success: "Die Notiz wurde erstellt. Platzhalter wurden ersetzt.",
     pdfUnavailable: "PDF ist noch nicht verfugbar.",
+    checkPanelOpen: "Prufen",
+    checkPanelClose: "Schliessen",
+    checkPanelEyebrow: "Vorprufung",
+    checkPanelTitle: "Quelldateien prufen",
+    checkPanelCopy: "Laden Sie TU, Plan und Notiz hoch. Das System pruft Daten, Stutzen und Platzhalter.",
+    checkPanelReuse: "Dateien aus dem Hauptformular verwenden, wenn bereits gewahlt",
+    checkNoteUpload: "Notiz DWG/DXF",
+    checkPanelNoteHint: "Ohne Notiz wird die automatisch gewahlte Vorlage gepruft.",
+    checkPanelRun: "Prufen",
+    checkPanelRunning: "Prufung...",
+    validationCheckTu: "TU-Datei fur die Prufung auswahlen.",
+    validationCheckPlan: "Plan-Datei fur die Prufung auswahlen.",
+    checkSummaryReady: "Keine kritischen Fehler gefunden.",
+    checkSummaryWarningsOnly: "Keine kritischen Fehler. Warnungen: {warnings}.",
+    checkSummaryIssues: "Fehler: {errors}, Warnungen: {warnings}.",
+    checkCategoryTu: "TU",
+    checkCategoryPlan: "Plan",
+    checkCategoryNote: "Notiz",
+    checkCategoryCross: "Quercheck",
+    checkCategoryWire: "Leiter",
+    checkCategoryProject: "Projekt",
+    checkCategoryArmature: "Armatur",
+    checkArmatureTitle: "Armaturberechnung nach Plan",
+    checkSeverityError: "Fehler",
+    checkSeverityWarning: "Warnung",
+    checkSeverityInfo: "Info",
   },
   it: {
     brand: "Automazione TU",
@@ -305,6 +401,32 @@ const translations = {
     checkLog: "Controlla log.txt.",
     success: "La nota e stata generata. Placeholder sostituiti.",
     pdfUnavailable: "PDF non ancora disponibile.",
+    checkPanelOpen: "Controlla",
+    checkPanelClose: "Chiudi",
+    checkPanelEyebrow: "Controllo preliminare",
+    checkPanelTitle: "Controllo file sorgente",
+    checkPanelCopy: "Carica TU, piano e nota. Il sistema controlla dati, sostegni e placeholder.",
+    checkPanelReuse: "Usa i file del modulo principale se gia selezionati",
+    checkNoteUpload: "Nota DWG/DXF",
+    checkPanelNoteHint: "Senza nota verra controllato il template selezionato automaticamente.",
+    checkPanelRun: "Controlla",
+    checkPanelRunning: "Controllo...",
+    validationCheckTu: "Scegli un file TU per il controllo.",
+    validationCheckPlan: "Scegli un piano per il controllo.",
+    checkSummaryReady: "Nessun errore critico trovato.",
+    checkSummaryWarningsOnly: "Nessun errore critico. Avvisi: {warnings}.",
+    checkSummaryIssues: "Errori: {errors}, avvisi: {warnings}.",
+    checkCategoryTu: "TU",
+    checkCategoryPlan: "Piano",
+    checkCategoryNote: "Nota",
+    checkCategoryCross: "Incrocio",
+    checkCategoryWire: "Conduttore",
+    checkCategoryProject: "Progetto",
+    checkCategoryArmature: "Armatura",
+    checkArmatureTitle: "Calcolo armatura dal piano",
+    checkSeverityError: "Errore",
+    checkSeverityWarning: "Avviso",
+    checkSeverityInfo: "Info",
   },
 };
 
@@ -513,6 +635,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     setLanguageMenuOpen(false);
     setWireMenuOpen(false);
+    setCheckPanelOpen(false);
   }
 });
 
@@ -606,6 +729,167 @@ downloadPdf.addEventListener("click", async () => {
   window.location.href = "/api/download/final-pdf";
 });
 
+function setCheckPanelOpen(isOpen) {
+  document.body.classList.toggle("is-check-panel-open", isOpen);
+  if (checkPanel) {
+    checkPanel.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  }
+  if (checkPanelBackdrop) {
+    checkPanelBackdrop.hidden = !isOpen;
+  }
+}
+
+function resolveCheckFile(mainInput, panelInput) {
+  if (useMainFormFiles?.checked && mainInput?.files?.length) {
+    return mainInput.files[0];
+  }
+  return panelInput?.files?.[0] || null;
+}
+
+function validateCheckForm() {
+  const tu = resolveCheckFile(tuFile, checkTuFile);
+  const plan = resolveCheckFile(planFile, checkPlanFile);
+  if (!tu) return t("validationCheckTu");
+  if (!plan) return t("validationCheckPlan");
+  return "";
+}
+
+function renderCheckResults(payload) {
+  if (!checkResults || !checkSummary || !checkIssueList) return;
+
+  const blocking = payload?.blocking_count || 0;
+  const warnings = payload?.warning_count || 0;
+  const isReady = payload?.ready === true;
+  const isFullyClean = isReady && warnings === 0;
+
+  checkSummary.className = `check-panel__summary ${isFullyClean ? "is-ready" : "is-issues"}`;
+  if (isFullyClean) {
+    checkSummary.textContent = t("checkSummaryReady");
+  } else if (isReady && warnings > 0) {
+    checkSummary.textContent = t("checkSummaryWarningsOnly").replace("{warnings}", String(warnings));
+  } else {
+    checkSummary.textContent = t("checkSummaryIssues").replace("{errors}", String(blocking)).replace("{warnings}", String(warnings));
+  }
+
+  if (checkArmature) {
+    checkArmature.hidden = true;
+  }
+
+  checkIssueList.replaceChildren();
+  if (isFullyClean) {
+    checkIssueList.hidden = true;
+    checkResults.hidden = false;
+    return;
+  }
+
+  checkIssueList.hidden = false;
+  const issues = payload?.issues || [];
+  issues.forEach((issue) => {
+    const item = document.createElement("li");
+    item.className = `check-issue is-${issue.severity}`;
+    const categoryKey = `checkCategory${(issue.category || "").charAt(0).toUpperCase()}${(issue.category || "").slice(1)}`;
+    const severityKey = `checkSeverity${(issue.severity || "info").charAt(0).toUpperCase()}${(issue.severity || "info").slice(1)}`;
+    const locationHtml = issue.location
+      ? `<span class="check-issue__location">${issue.location}</span>`
+      : "";
+    item.innerHTML = `
+      <span class="check-issue__badge">${t(severityKey)}</span>
+      <div class="check-issue__body">
+        <span class="check-issue__category">${t(categoryKey)}</span>
+        ${locationHtml}
+        <p class="check-issue__message">${issue.message}</p>
+      </div>
+    `;
+    checkIssueList.appendChild(item);
+  });
+
+  checkResults.hidden = false;
+}
+
+openCheckPanel?.addEventListener("click", () => {
+  setLanguageMenuOpen(false);
+  setWireMenuOpen(false);
+  setCheckPanelOpen(true);
+});
+
+closeCheckPanel?.addEventListener("click", () => setCheckPanelOpen(false));
+checkPanelBackdrop?.addEventListener("click", () => setCheckPanelOpen(false));
+
+[checkTuFile, checkPlanFile, checkNoteFile].forEach((input) => {
+  if (!input) return;
+  input.addEventListener("change", () => {
+    const targetMap = {
+      checkTuFile: checkTuName,
+      checkPlanFile: checkPlanName,
+      checkNoteFile: checkNoteName,
+    };
+    updateFileName(input, targetMap[input.id]);
+  });
+});
+
+checkForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const validation = validateCheckForm();
+  if (validation) {
+    checkSummary.className = "check-panel__summary is-issues";
+    checkSummary.textContent = validation;
+    checkResults.hidden = false;
+    checkIssueList.replaceChildren();
+    return;
+  }
+
+  const body = new FormData();
+  body.append("tu_file", resolveCheckFile(tuFile, checkTuFile));
+  body.append("plan_file", resolveCheckFile(planFile, checkPlanFile));
+  const note = resolveCheckFile(null, checkNoteFile);
+  if (note) {
+    body.append("note_file", note);
+  }
+  const projectValue = projectNumber.value.trim();
+  if (projectValue) {
+    body.append("project_number", projectValue);
+  }
+  syncWireFormFields();
+  body.append("wire_selection_mode", wireSelectionMode.value);
+  if (wireManualValue.value) {
+    body.append("wire_manual_value", wireManualValue.value);
+  }
+
+  runCheckButton.disabled = true;
+  runCheckButton.textContent = t("checkPanelRunning");
+  checkResults.hidden = false;
+  checkSummary.className = "check-panel__summary";
+  checkSummary.textContent = t("checkPanelRunning");
+  checkIssueList.replaceChildren();
+
+  try {
+    const response = await fetch("/api/validate", {
+      method: "POST",
+      body,
+    });
+    const responseText = await response.text();
+    let payload = {};
+    if (responseText) {
+      try {
+        payload = JSON.parse(responseText);
+      } catch {
+        throw new Error(responseText.slice(0, 300) || t("processError"));
+      }
+    }
+    if (!response.ok) {
+      throw new Error(formatApiError(payload));
+    }
+    renderCheckResults(payload);
+  } catch (error) {
+    checkSummary.className = "check-panel__summary is-issues";
+    checkSummary.textContent = error.message;
+    checkIssueList.replaceChildren();
+  } finally {
+    runCheckButton.disabled = false;
+    runCheckButton.textContent = t("checkPanelRun");
+  }
+});
+
 applyTheme(false);
 updateLanguagePickerUI();
 updateWirePickerUI();
@@ -657,6 +941,9 @@ function applyLanguage(animated = false) {
     if (visibleText) {
       updateFileName(tuFile, tuName);
       updateFileName(planFile, planName);
+      updateFileName(checkTuFile, checkTuName);
+      updateFileName(checkPlanFile, checkPlanName);
+      updateFileName(checkNoteFile, checkNoteName);
       updateWirePickerUI();
       updateWireHint();
       if (!progressTimer) {

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .tu_parser import abbreviate_garden_partnership_terms, build_branch_armature_line
+from .tu_parser import abbreviate_address_display_terms, abbreviate_applicant_display_terms, build_branch_armature_line
 
 
 TU_FIELDS = (
@@ -49,9 +49,14 @@ def build_replacement_map(
 
     for address_key in ("{{ADRESS}}", "{{ADDRESS}}"):
         if address_key in replacement_map and replacement_map[address_key]:
-            replacement_map[address_key] = abbreviate_garden_partnership_terms(
+            replacement_map[address_key] = abbreviate_address_display_terms(
                 replacement_map[address_key]
             )
+
+    if "{{APPLICANT}}" in replacement_map and replacement_map["{{APPLICANT}}"]:
+        replacement_map["{{APPLICANT}}"] = abbreviate_applicant_display_terms(
+            replacement_map["{{APPLICANT}}"]
+        )
 
     return replacement_map
 

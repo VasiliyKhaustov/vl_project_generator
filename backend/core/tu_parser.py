@@ -225,6 +225,7 @@ def _extract_applicant(text: str, paragraphs: list[str]) -> str:
                 return _normalize_applicant_name(previous)
 
     patterns = [
+        r"наименование сетевой организации[^)]*\)\s*\n\s*([^\n(]+?)\s*\n\s*\(полное наименование организации",
         r"\)\s*([^()\n]{5,160}?)\s*\(фамилия,\s*имя,\s*отчество заявителя\)",
         r"\(([^()]{5,120})\),\s*расположенн",
     ]
@@ -236,7 +237,7 @@ def _extract_applicant(text: str, paragraphs: list[str]) -> str:
 
 
 def _normalize_applicant_name(value: str) -> str:
-    normalized = _normalize(value)
+    normalized = abbreviate_applicant_display_terms(_normalize(value))
     lower = normalized.lower()
     organization_markers = (
         "общество",
@@ -567,12 +568,49 @@ _GARDEN_PARTNERSHIP_PATTERNS = (
     r"\bсадовое\s+некоммерческое\s+партнерство\b",
 )
 
+_GARAGE_COOPERATIVE_PATTERNS = (
+    (r"\bгаражный\s+потребительский\s+кооператив\s+автолюбителей\b", "ГПКА"),
+    (r"\bгаражный\s+потребительский\s+кооператив\b", "ГПК"),
+    (r"\bгаражный\s+кооператив\b", "ГК"),
+)
+
+_APPLICANT_ORGANIZATION_PATTERNS = (
+  (r"\bобщество\s+с\s+ограниченной\s+ответственностью\b", "ООО"),
+  (r"\bиндивидуальный\s+предприниматель\b", "ИП"),
+  (r"\bакционерное\s+общество\b", "АО"),
+  (r"\bпубличное\s+акционерное\s+общество\b", "ПАО"),
+)
+
+
+def abbreviate_applicant_display_terms(value: str) -> str:
+    result = value
+    for pattern, replacement in _APPLICANT_ORGANIZATION_PATTERNS:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", result).strip()
+
 
 def abbreviate_garden_partnership_terms(value: str) -> str:
+    return abbreviate_address_display_terms(value)
+
+
+def abbreviate_address_display_terms(value: str) -> str:
     result = value
     for pattern in _GARDEN_PARTNERSHIP_PATTERNS:
         result = re.sub(pattern, "СНП", result, flags=re.IGNORECASE)
+    for pattern, replacement in _GARAGE_COOPERATIVE_PATTERNS:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    result = re.sub(r"\bучасток\b", "уч.", result, flags=re.IGNORECASE)
+    result = _drop_redundant_urban_district(result)
     return re.sub(r"\s+", " ", result).strip()
+
+
+def _drop_redundant_urban_district(value: str) -> str:
+    return re.sub(
+        r",\s*городской\s+округ\s+(г\.?\s*[А-ЯЁа-яё-]+)\s*,(?=.*\1)",
+        ", ",
+        value,
+        flags=re.IGNORECASE,
+    )
 
 
 def _normalize_address_terms(value: str) -> str:
@@ -620,7 +658,7 @@ def _normalize_address_terms(value: str) -> str:
     result = re.sub(r"\s*,\s*", ", ", result)
     if has_city_marker:
         result = _drop_district_before_city(result)
-    result = abbreviate_garden_partnership_terms(result)
+    result = abbreviate_address_display_terms(result)
     return result.strip(" .;,")
 
 

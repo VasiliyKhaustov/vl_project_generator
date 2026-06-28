@@ -19,7 +19,9 @@ from backend.core.dxf_reader import analyze_dxf
 from backend.core.output_manager import OutputManager
 from backend.core.pdf_exporter import merge_project_pdfs, render_dxf_to_pdf, render_tu_docx_to_pdf
 from backend.core.replacement_builder import build_replacement_map
+from backend.core.template_selector import select_template_note_path, template_placeholder_warning
 from backend.core.tu_parser import parse_tu, read_tu_text
+from backend.core.validation import validate_project_files
 from backend.core.wire_resolver import WireSelectionError, apply_wire_selection
 
 
@@ -171,7 +173,9 @@ async def process_project(
         materials_data = calculate_materials(tu_data, plan_data)
         logger.info("Производные значения рассчитаны.")
 
-        template_note_path, template_warning = _select_template_note_path(tu_data, plan_data, logger)
+        template_note_path, template_warning = select_template_note_path(
+            TEMPLATES_DIR, tu_data, plan_data, logger
+        )
         if template_warning:
             warnings.append(template_warning)
 
@@ -210,14 +214,14 @@ async def process_project(
             logger.warning("DWG сформирован, но часть placeholders осталась незаменённой.")
         else:
             logger.info("DWG-записка сформирована. Placeholders заменены.")
-        template_placeholder_warning = _template_placeholder_warning(
+        template_placeholder_warning_msg = template_placeholder_warning(
             template_note_path,
             plan_data,
             cad_result.get("template_placeholders", []),
         )
-        if template_placeholder_warning:
-            warnings.append(template_placeholder_warning)
-            logger.warning(template_placeholder_warning)
+        if template_placeholder_warning_msg:
+            warnings.append(template_placeholder_warning_msg)
+            logger.warning(template_placeholder_warning_msg)
 
         pdf_files: dict[str, str] = {}
         note_pdf_meta: dict[str, Any] = {}
@@ -313,6 +317,55 @@ async def process_project(
         raise HTTPException(status_code=500, detail=f"Ошибка обработки: {exc}") from exc
 
 
+@router.post("/validate")
+async def validate_project(
+    tu_file: UploadFile = File(...),
+    plan_file: UploadFile = File(...),
+    note_file: UploadFile | None = File(None),
+    project_number: str | None = Form(None),
+    wire_selection_mode: str = Form("auto"),
+    wire_manual_value: str | None = Form(None),
+) -> dict[str, Any]:
+    if not tu_file.filename:
+        raise HTTPException(status_code=422, detail="Не выбран файл ТУ.")
+    if not plan_file.filename:
+        raise HTTPException(status_code=422, detail="Не выбран файл плана.")
+
+    try:
+        wire_selection_mode, wire_manual_value = _normalize_wire_form_params(
+            wire_selection_mode,
+            wire_manual_value,
+        )
+    except WireSelectionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    output = OutputManager(PROJECT_ROOT)
+    output.prepare()
+
+    tu_path = output.save_upload_bytes(tu_file.filename, await tu_file.read(), "validate_tu")
+    plan_path = output.save_upload_bytes(plan_file.filename, await plan_file.read(), "validate_plan")
+    note_path = None
+    if note_file and note_file.filename:
+        note_path = output.save_upload_bytes(note_file.filename, await note_file.read(), "validate_note")
+
+    try:
+        return validate_project_files(
+            tu_path=tu_path,
+            plan_path=plan_path,
+            note_path=note_path,
+            templates_dir=TEMPLATES_DIR,
+            work_dir=output.output_root,
+            project_number=project_number,
+            wire_selection_mode=wire_selection_mode,
+            wire_manual_value=wire_manual_value,
+            logger=output.logger(),
+        )
+    except OdaConverterError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Ошибка проверки: {exc}") from exc
+
+
 @router.get("/download/note")
 def download_note() -> FileResponse:
     path = PROJECT_ROOT / "output" / "result" / "dwg" / "note_result.dwg"
@@ -334,57 +387,3 @@ def download_final_pdf():
             },
         )
     return FileResponse(path, filename="final_project.pdf", media_type="application/pdf")
-
-
-def _select_template_note_path(tu_data: dict[str, Any], plan_data: dict[str, Any], logger: Any) -> tuple[Path, str | None]:
-    supports = plan_data.get("supports", {})
-    has_a23 = int(supports.get("A23", 0) or 0) > 0
-    has_ya23 = int(supports.get("YA23", 0) or 0) > 0
-    has_komapparat = bool(tu_data.get("requires_komapparat_template"))
-
-    base_name = "template_note_komapparat" if has_komapparat else "template_note"
-    if has_a23 and has_ya23:
-        template_name = f"{base_name}_A23_YA23.dwg"
-    elif has_a23:
-        template_name = f"{base_name}_A23.dwg"
-    elif has_ya23:
-        template_name = f"{base_name}_YA23.dwg"
-    else:
-        template_name = f"{base_name}.dwg"
-
-    template_path = TEMPLATES_DIR / template_name
-    if template_path.exists():
-        logger.info(
-            "Выбран шаблон записки: "
-            f"{template_name} (коммутационный аппарат: {has_komapparat}, A23: {has_a23}, YA23*: {has_ya23})."
-        )
-        return template_path, None
-
-    fallback = TEMPLATES_DIR / "template_note.dwg"
-    message = (
-        f"Шаблон {template_name} не найден. Использую template_note.dwg. "
-        "Проверьте папку examples/templates."
-    )
-    logger.warning(message)
-    return fallback, message
-
-
-def _template_placeholder_warning(
-    template_path: Path,
-    plan_data: dict[str, Any],
-    template_placeholders: list[str],
-) -> str | None:
-    supports = plan_data.get("supports", {})
-    expected: set[str] = set()
-    if int(supports.get("A23", 0) or 0) > 0:
-        expected.update({"{{A23}}", "{{A231}}", "{{Y4}}"})
-    if int(supports.get("YA23", 0) or 0) > 0:
-        expected.update({"{{YA23}}", "{{YA231}}", "{{X89}}"})
-
-    missing = sorted(expected - set(template_placeholders))
-    if not missing:
-        return None
-    return (
-        f"Выбранный шаблон {template_path.name} не содержит placeholders: {', '.join(missing)}. "
-        "Проверьте эталонный DWG в examples/templates."
-    )

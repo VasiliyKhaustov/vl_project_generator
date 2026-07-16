@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Автоматизация ТУ</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260623" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260716bgjob" />
   </head>
   <body data-theme="dark">
     <div class="page-bg" aria-hidden="true"></div>
@@ -66,7 +66,7 @@
           <p class="eyebrow" data-i18n="eyebrow">Локальный инженерный контур</p>
           <h1 class="hero-title" data-i18n="heroTitle">Автоматизация подготовки документации по ТУ</h1>
           <p class="hero-copy" data-i18n="heroCopy">
-            Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку и полный PDF-комплект.
+            Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку.
           </p>
         </section>
 
@@ -74,7 +74,12 @@
           <form class="work-card glass" id="processForm">
             <div class="panel-head">
               <span data-i18n="inputData">Исходные данные</span>
-              <span class="run-state" id="runState" data-i18n="idle">Ожидание</span>
+              <div class="panel-head__actions">
+                <button class="top-control liquid-control" id="addParallelProject" type="button" data-i18n="addParallelProject">
+                  Параллельный проект
+                </button>
+                <span class="run-state" id="runState" data-i18n="idle">Ожидание</span>
+              </div>
             </div>
 
             <label class="field field-primary">
@@ -141,6 +146,7 @@
               </div>
               <input id="wireSelectionMode" name="wire_selection_mode" type="hidden" value="auto" />
               <input id="wireManualValue" name="wire_manual_value" type="hidden" value="" />
+              <input id="branchPoleType" name="branch_pole_type" type="hidden" value="" />
               <p class="field-hint wire-hint" id="wireHint" data-i18n="wireHintAuto">Система определит провод сама</p>
             </div>
 
@@ -194,6 +200,17 @@
                 <span data-i18n="stepDone">Готово</span>
               </div>
             </div>
+
+            <div class="projects-panel" id="projectsPanel">
+              <div class="panel-head projects-panel__head">
+                <span data-i18n="projectsListTitle">Готовые проекты</span>
+                <span class="projects-panel__count" id="projectsCount">0</span>
+              </div>
+              <p class="projects-panel__hint" data-i18n="projectsListHint">
+                Можно запустить второй проект параллельно и скачать каждый отдельно.
+              </p>
+              <div class="projects-list" id="projectsList"></div>
+            </div>
           </aside>
         </section>
 
@@ -208,7 +225,7 @@
           </article>
           <article class="benefit-card glass">
             <h2 data-i18n="cardThreeTitle">Собрать комплект</h2>
-            <p data-i18n="cardThreeText">После обработки можно скачать записку и итоговый PDF, если экспорт доступен.</p>
+            <p data-i18n="cardThreeText">После обработки можно скачать готовую записку по каждому проекту отдельно.</p>
           </article>
         </section>
       </main>
@@ -223,12 +240,29 @@
       <button class="dock-button dock-note liquid-control" id="downloadNote" type="button" data-label="Скачать записку" aria-label="Скачать записку" data-i18n-label="dockNote" data-i18n-aria="dockNote" disabled>
         <span class="dock-icon">DWG</span>
       </button>
-      <button class="dock-button dock-pdf liquid-control" id="downloadPdf" type="button" data-label="Скачать PDF" aria-label="Скачать PDF" data-i18n-label="dockPdf" data-i18n-aria="dockPdf" disabled>
-        <span class="dock-icon">PDF</span>
-      </button>
     </nav>
 
     <div class="check-panel-backdrop" id="checkPanelBackdrop" hidden></div>
+    <div class="check-panel-backdrop" id="yopkBackdrop" hidden></div>
+    <aside class="yopk-panel glass" id="yopkPanel" aria-hidden="true" aria-labelledby="yopkPanelTitle">
+      <div class="check-panel__head">
+        <div>
+          <p class="check-panel__eyebrow" data-i18n="yopkEyebrow">Проект 10 кВ</p>
+          <h2 class="check-panel__title" id="yopkPanelTitle" data-i18n="yopkTitle">От какой опоры ответвляемся?</h2>
+        </div>
+      </div>
+      <p class="check-panel__copy" data-i18n="yopkCopy">
+        Выберите тип узла ответвления для заполнения поля {{YOPK}} в пояснительной записке.
+      </p>
+      <div class="yopk-actions">
+        <button class="check-panel__submit liquid-control" id="yopkIntermediate" type="button" data-i18n="yopkIntermediate">
+          От промежуточной (УОП)
+        </button>
+        <button class="check-panel__submit liquid-control" id="yopkAnchor" type="button" data-i18n="yopkAnchor">
+          От анкерной (УОК)
+        </button>
+      </div>
+    </aside>
     <aside class="check-panel glass" id="checkPanel" aria-hidden="true" aria-labelledby="checkPanelTitle">
       <div class="check-panel__head">
         <div>
@@ -283,6 +317,6 @@
       </div>
     </aside>
 
-    <script src="/static/script.js?v=20260627"></script>
+    <script src="/static/script.js?v=20260716bgjob"></script>
   </body>
 </html>

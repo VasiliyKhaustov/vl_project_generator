@@ -18,6 +18,14 @@ const runState = document.querySelector("#runState");
 const startButton = document.querySelector("#startButton");
 const downloadNote = document.querySelector("#downloadNote");
 const downloadPdf = document.querySelector("#downloadPdf");
+const addParallelProject = document.querySelector("#addParallelProject");
+const projectsList = document.querySelector("#projectsList");
+const projectsCount = document.querySelector("#projectsCount");
+let lastNoteDownloadUrl = "/api/download/note";
+let selectedRunId = "";
+let activeJobsCount = 0;
+let projectsListBound = false;
+const projectRuns = [];
 const statusItems = [...document.querySelectorAll(".status-item")];
 const cursorLight = document.querySelector("#cursorLight");
 const liquidTargets = [...document.querySelectorAll(".liquid-control")];
@@ -46,6 +54,11 @@ const checkSummary = document.querySelector("#checkSummary");
 const checkArmature = document.querySelector("#checkArmature");
 const checkArmatureList = document.querySelector("#checkArmatureList");
 const checkIssueList = document.querySelector("#checkIssueList");
+const yopkBackdrop = document.querySelector("#yopkBackdrop");
+const yopkPanel = document.querySelector("#yopkPanel");
+const yopkIntermediate = document.querySelector("#yopkIntermediate");
+const yopkAnchor = document.querySelector("#yopkAnchor");
+const branchPoleType = document.querySelector("#branchPoleType");
 
 const LANGUAGE_META = {
   ru: { flag: "🇷🇺", name: "Русский" },
@@ -74,7 +87,7 @@ const translations = {
     themeDark: "Темная тема",
     eyebrow: "Локальный инженерный контур",
     heroTitle: "Автоматизация подготовки документации по ТУ",
-    heroCopy: "Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку и полный PDF-комплект.",
+    heroCopy: "Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку.",
     inputData: "Исходные данные",
     idle: "Ожидание",
     projectNumber: "Номер проекта",
@@ -106,17 +119,28 @@ const translations = {
     cardTwoTitle: "Проверить план",
     cardTwoText: "Приложение посчитает длину линии, опоры и заземления без изменения исходного чертежа.",
     cardThreeTitle: "Собрать комплект",
-    cardThreeText: "После обработки можно скачать записку и итоговый PDF, если экспорт доступен.",
+    cardThreeText: "После обработки можно скачать готовую записку по каждому проекту отдельно.",
     footer: "Автоматизация ТУ — инженерный инструмент для подготовки проектной документации",
     dockStart: "Старт",
     dockNote: "Скачать записку",
     dockPdf: "Скачать PDF",
+    addParallelProject: "Параллельный проект",
+    projectsListTitle: "Готовые проекты",
+    projectsListHint: "Можно запустить второй проект параллельно и скачать каждый отдельно.",
+    parallelFormReady: "Форма очищена. Загрузите ТУ и план для следующего проекта — предыдущие скачивания сохранятся.",
+    projectRunning: "Обрабатывается…",
+    projectReady: "Готов к скачиванию",
+    projectFailed: "Ошибка",
+    projectDownloadNote: "Записка",
+    projectDownloadPdf: "PDF",
+    projectType04: "0,4 кВ",
+    projectType10: "10 кВ",
     stateFiles: "Передача файлов",
     stateTu: "Чтение ТУ",
     statePlan: "Анализ плана",
     stateMap: "Создание карты замен",
     stateDwg: "Заполнение DWG",
-    statePdf: "Сборка PDF",
+    statePdf: "Готово",
     ready: "Готово",
     check: "Проверьте",
     error: "Ошибка",
@@ -125,11 +149,13 @@ const translations = {
     validationTu: "Выберите файл ТУ DOCX/PDF.",
     validationPlan: "Выберите файл плана DWG/DXF.",
     processError: "Не удалось обработать проект.",
-    processingStarted: "Обработка запущена. Обычно это занимает 3–8 минут: чтение ТУ, расчёт километража, заполнение DWG и сборка PDF.",
+    networkError: "Сервер не ответил. Обновите страницу и запустите проект ещё раз.",
+    processingStarted: "Обработка запущена: чтение ТУ, расчёт и заполнение записки. PDF не создаётся.",
     unresolved: "Часть полей не заменена:",
     checkLog: "Проверьте log.txt.",
     success: "Пояснительная записка сформирована. Поля заменены.",
-    pdfUnavailable: "PDF пока недоступен.",
+    success10kv: "10 кВ: сформирован заполненный DXF — placeholders заменены, структура эталона сохранена.",
+    pdfUnavailable: "PDF отключён.",
     checkPanelOpen: "Проверка",
     checkPanelClose: "Закрыть",
     checkPanelEyebrow: "Предварительная проверка",
@@ -156,6 +182,11 @@ const translations = {
     checkSeverityError: "Ошибка",
     checkSeverityWarning: "Внимание",
     checkSeverityInfo: "Инфо",
+    yopkEyebrow: "Проект 10 кВ",
+    yopkTitle: "От какой опоры ответвляемся?",
+    yopkCopy: "Выберите тип узла ответвления для заполнения поля {{YOPK}} в пояснительной записке.",
+    yopkIntermediate: "От промежуточной (УОП)",
+    yopkAnchor: "От анкерной (УОК)",
   },
   en: {
     brand: "TU Automation",
@@ -202,6 +233,17 @@ const translations = {
     dockStart: "Start",
     dockNote: "Download note",
     dockPdf: "Download PDF",
+    addParallelProject: "Parallel project",
+    projectsListTitle: "Ready projects",
+    projectsListHint: "You can start a second project in parallel and download each one separately.",
+    parallelFormReady: "Form cleared. Upload TU and plan for the next project — previous downloads stay available.",
+    projectRunning: "Processing…",
+    projectReady: "Ready to download",
+    projectFailed: "Error",
+    projectDownloadNote: "Note",
+    projectDownloadPdf: "PDF",
+    projectType04: "0.4 kV",
+    projectType10: "10 kV",
     stateFiles: "Uploading files",
     stateTu: "Reading TU",
     statePlan: "Analyzing plan",
@@ -220,6 +262,7 @@ const translations = {
     unresolved: "Some placeholders were not replaced:",
     checkLog: "Check log.txt.",
     success: "The note has been generated. Placeholders were replaced.",
+    success10kv: "10 kV note generated. Placeholders replaced in note_result.dwg.",
     pdfUnavailable: "PDF is not available yet.",
     checkPanelOpen: "Validate",
     checkPanelClose: "Close",
@@ -247,6 +290,11 @@ const translations = {
     checkSeverityError: "Error",
     checkSeverityWarning: "Warning",
     checkSeverityInfo: "Info",
+    yopkEyebrow: "10 kV project",
+    yopkTitle: "Which pole is the branch from?",
+    yopkCopy: "Choose the branch node type for the {{YOPK}} placeholder in the explanatory note.",
+    yopkIntermediate: "From intermediate (UOP)",
+    yopkAnchor: "From anchor (UOK)",
   },
   de: {
     brand: "TU-Automatisierung",
@@ -446,27 +494,43 @@ const statusTimeline = [
   { step: "completed", stateKey: "statePdf" },
 ];
 
-window.addEventListener("pointermove", (event) => {
-  if (cursorLight) {
-    cursorLight.style.left = `${event.clientX}px`;
-    cursorLight.style.top = `${event.clientY}px`;
-  }
-});
+let cursorFrame = 0;
+let pendingCursorX = 0;
+let pendingCursorY = 0;
+window.addEventListener(
+  "pointermove",
+  (event) => {
+    if (!cursorLight) return;
+    pendingCursorX = event.clientX;
+    pendingCursorY = event.clientY;
+    if (cursorFrame) return;
+    cursorFrame = window.requestAnimationFrame(() => {
+      cursorFrame = 0;
+      cursorLight.style.transform = `translate3d(${pendingCursorX}px, ${pendingCursorY}px, 0) translate(-50%, -50%)`;
+    });
+  },
+  { passive: true },
+);
 
 liquidTargets.forEach((target) => {
-  target.addEventListener("pointermove", (event) => {
-    const rect = target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    target.style.setProperty("--mx", `${x}px`);
-    target.style.setProperty("--my", `${y}px`);
-    target.style.setProperty("--pull-x", `${(x / rect.width - 0.5) * 4}px`);
-    target.style.setProperty("--pull-y", `${(y / rect.height - 0.5) * 4}px`);
-  });
-  target.addEventListener("pointerleave", () => {
-    target.style.setProperty("--pull-x", "0px");
-    target.style.setProperty("--pull-y", "0px");
-  });
+  let frame = 0;
+  let nextX = 0;
+  let nextY = 0;
+  target.addEventListener(
+    "pointermove",
+    (event) => {
+      const rect = target.getBoundingClientRect();
+      nextX = event.clientX - rect.left;
+      nextY = event.clientY - rect.top;
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        target.style.setProperty("--mx", `${nextX}px`);
+        target.style.setProperty("--my", `${nextY}px`);
+      });
+    },
+    { passive: true },
+  );
 });
 
 tuFile.addEventListener("change", () => updateFileName(tuFile, tuName));
@@ -636,14 +700,13 @@ document.addEventListener("keydown", (event) => {
     setLanguageMenuOpen(false);
     setWireMenuOpen(false);
     setCheckPanelOpen(false);
+    setYopkPanelOpen(false);
   }
 });
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearNotice();
-  resetStatus();
-  setDownloads(false);
 
   const validation = validateForm();
   if (validation) {
@@ -651,20 +714,119 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
-  const body = new FormData(form);
+  const jobProjectNumber = projectNumber.value.trim();
+  const jobTuFile = tuFile.files[0];
+  const jobPlanFile = planFile.files[0];
   syncWireFormFields();
-  body.set("project_number", projectNumber.value.trim());
-  body.set("wire_selection_mode", wireSelectionMode.value);
-  if (wireManualValue.value) {
-    body.set("wire_manual_value", wireManualValue.value);
-  } else {
-    body.delete("wire_manual_value");
-  }
+  const jobWireMode = wireSelectionMode.value;
+  const jobWireManual = wireManualValue.value;
 
   startButton.disabled = true;
+  let runEntry = null;
+  try {
+    const detectBody = new FormData();
+    detectBody.append("tu_file", jobTuFile);
+    if (jobPlanFile) {
+      detectBody.append("plan_file", jobPlanFile);
+    }
+    const detectResponse = await fetch("/api/detect", {
+      method: "POST",
+      body: detectBody,
+    });
+    const detectText = await detectResponse.text();
+    let detectPayload = {};
+    if (detectText) {
+      detectPayload = JSON.parse(detectText);
+    }
+    if (!detectResponse.ok) {
+      throw new Error(formatApiError(detectPayload));
+    }
+
+    let selectedBranchPoleType = branchPoleType.value.trim();
+    if (detectPayload.requires_yopk) {
+      selectedBranchPoleType = await askBranchPoleType();
+      if (!selectedBranchPoleType) {
+        runState.textContent = t("idle");
+        return;
+      }
+      branchPoleType.value = selectedBranchPoleType;
+    } else {
+      branchPoleType.value = "";
+      selectedBranchPoleType = "";
+    }
+
+    runEntry = {
+      id: detectPayload.run_id || `local-${Date.now()}`,
+      projectNumber: jobProjectNumber,
+      status: "running",
+      projectType: detectPayload.project_type || "",
+      noteUrl: "",
+      noteReady: false,
+      error: "",
+    };
+    upsertProjectRun(runEntry);
+    selectProjectRun(runEntry.id);
+    startButton.disabled = false;
+
+    await runProjectProcessing({
+      runEntry,
+      projectNumberValue: jobProjectNumber,
+      tuFileValue: jobTuFile,
+      planFileValue: jobPlanFile,
+      wireMode: jobWireMode,
+      wireManual: jobWireManual,
+      selectedBranchPoleType,
+      runId: detectPayload.run_id || "",
+    });
+  } catch (error) {
+    const message =
+      error?.name === "TypeError" || /load failed|failed to fetch/i.test(String(error?.message || ""))
+        ? t("networkError")
+        : error.message;
+    if (runEntry) {
+      runEntry.status = "error";
+      runEntry.error = message;
+      upsertProjectRun(runEntry);
+    }
+    stopProgressTimeline();
+    runState.textContent = t("error");
+    showNotice(message, "error");
+  } finally {
+    startButton.disabled = false;
+  }
+});
+
+async function runProjectProcessing({
+  runEntry,
+  projectNumberValue,
+  tuFileValue,
+  planFileValue,
+  wireMode,
+  wireManual,
+  selectedBranchPoleType,
+  runId,
+}) {
+  const body = new FormData();
+  body.set("project_number", projectNumberValue);
+  body.append("tu_file", tuFileValue);
+  body.append("plan_file", planFileValue);
+  body.set("wire_selection_mode", wireMode || "auto");
+  if (wireManual) {
+    body.set("wire_manual_value", wireManual);
+  }
+  if (selectedBranchPoleType) {
+    body.set("branch_pole_type", selectedBranchPoleType);
+  }
+  if (runId) {
+    body.set("run_id", runId);
+  }
+
+  activeJobsCount += 1;
+  resetStatus();
   startProgressTimeline();
   showNotice(t("processingStarted"), "success");
 
+  let sessionId = runId || runEntry.id;
   try {
     const response = await fetch("/api/process", {
       method: "POST",
@@ -684,50 +846,330 @@ form.addEventListener("submit", async (event) => {
       throw new Error(formatApiError(payload));
     }
 
-    stopProgressTimeline();
-    applySteps(payload.steps);
+    sessionId = payload.run_id || sessionId;
+    runEntry.id = sessionId;
+    runEntry.noteUrl = payload.note_download_url || `/api/download/${sessionId}/note`;
+    runEntry.status = "running";
+    runEntry.error = "";
+    upsertProjectRun(runEntry);
+    selectProjectRun(sessionId);
+
+    if (payload.status === "processing") {
+      payload = await pollRunStatus(sessionId, runEntry);
+    }
+
+    if (activeJobsCount <= 1) {
+      stopProgressTimeline();
+      applySteps(payload.steps);
+    }
 
     const unresolved = payload.cad?.unresolved_placeholders || [];
     const warningText = payload.warnings?.length ? ` ${payload.warnings.join(" ")}` : "";
+    const noteReady =
+      Boolean(payload.success) &&
+      (Boolean(payload.files?.note_result) ||
+        payload.status === "completed" ||
+        payload.status === "completed_with_warnings");
 
-    if (unresolved.length) {
-      setDownloads(false);
+    runEntry.id = sessionId;
+    runEntry.projectType = payload.project_type || runEntry.projectType;
+    runEntry.noteUrl = payload.note_download_url || `/api/download/${sessionId}/note`;
+    runEntry.noteReady = noteReady;
+    runEntry.status = noteReady ? "ready" : "error";
+    runEntry.error = noteReady
+      ? ""
+      : payload.message || payload.detail || `${t("unresolved")} ${(unresolved || []).join(", ")}. ${t("checkLog")}`;
+    upsertProjectRun(runEntry);
+    selectProjectRun(sessionId);
+
+    if (!noteReady) {
       runState.textContent = t("check");
-      showNotice(`${t("unresolved")} ${unresolved.join(", ")}. ${t("checkLog")}${warningText}`, "error");
+      showNotice(runEntry.error + warningText, "error");
       return;
     }
 
-    setDownloads(true);
     runState.textContent = t("ready");
-    showNotice(`${t("success")}${formatWireSuccessNotice(payload)}${warningText}`, "success");
+    const successMessage =
+      payload.project_type === "10kv" ? t("success10kv") : t("success");
+    const unresolvedNote = unresolved.length
+      ? ` ${t("unresolved")} ${unresolved.join(", ")}.`
+      : "";
+    showNotice(
+      `${successMessage}${unresolvedNote}${formatWireSuccessNotice(payload)}${warningText}`,
+      "success",
+    );
   } catch (error) {
-    stopProgressTimeline();
-    runState.textContent = t("error");
-    showNotice(error.message, "error");
+    // Если соединение оборвалось, но сервер уже доделал записку — восстанавливаем статус.
+    if (sessionId) {
+      try {
+        const recovered = await fetchRunStatus(sessionId);
+        if (
+          recovered &&
+          (recovered.status === "completed" || recovered.status === "completed_with_warnings") &&
+          recovered.success
+        ) {
+          runEntry.id = sessionId;
+          runEntry.projectType = recovered.project_type || runEntry.projectType;
+          runEntry.noteUrl = recovered.note_download_url || `/api/download/${sessionId}/note`;
+          runEntry.noteReady = true;
+          runEntry.status = "ready";
+          runEntry.error = "";
+          upsertProjectRun(runEntry);
+          selectProjectRun(sessionId);
+          if (activeJobsCount <= 1) {
+            stopProgressTimeline();
+            applySteps(recovered.steps);
+          }
+          runState.textContent = t("ready");
+          showNotice(
+            recovered.project_type === "10kv" ? t("success10kv") : t("success"),
+            "success",
+          );
+          return;
+        }
+      } catch {
+        // ignore recovery errors
+      }
+    }
+    runEntry.status = "error";
+    runEntry.error = error.message;
+    upsertProjectRun(runEntry);
+    throw error;
   } finally {
-    startButton.disabled = false;
+    activeJobsCount = Math.max(0, activeJobsCount - 1);
+    if (activeJobsCount === 0) {
+      stopProgressTimeline();
+    }
   }
-});
+}
 
-downloadNote.addEventListener("click", () => {
-  window.location.href = "/api/download/note";
-});
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-downloadPdf.addEventListener("click", async () => {
-  const response = await fetch("/api/download/final-pdf");
-  if (response.status === 202) {
-    const payload = await response.json();
-    showNotice(payload.message, "success");
-    return;
+async function fetchRunStatus(runId) {
+  const response = await fetch(`/api/status/${encodeURIComponent(runId)}`);
+  const responseText = await response.text();
+  let payload = {};
+  if (responseText) {
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      throw new Error(responseText.slice(0, 300) || t("processError"));
+    }
   }
-
   if (!response.ok) {
-    showNotice(t("pdfUnavailable"), "error");
+    throw new Error(formatApiError(payload));
+  }
+  return payload;
+}
+
+async function pollRunStatus(runId, runEntry) {
+  const started = Date.now();
+  const maxMs = 20 * 60 * 1000;
+  let lastPayload = null;
+
+  while (Date.now() - started < maxMs) {
+    const payload = await fetchRunStatus(runId);
+    lastPayload = payload;
+
+    runEntry.id = runId;
+    runEntry.projectType = payload.project_type || runEntry.projectType;
+    runEntry.noteUrl = payload.note_download_url || `/api/download/${runId}/note`;
+    runEntry.status = "running";
+    upsertProjectRun(runEntry);
+
+    if (activeJobsCount <= 1 && payload.steps) {
+      applySteps(payload.steps);
+    }
+    if (payload.message) {
+      showNotice(payload.message, "success");
+    }
+
+    if (
+      payload.status === "completed" ||
+      payload.status === "completed_with_warnings" ||
+      payload.status === "failed"
+    ) {
+      return payload;
+    }
+
+    await sleep(2000);
+  }
+
+  if (lastPayload && _noteLooksReady(lastPayload)) {
+    return lastPayload;
+  }
+  throw new Error(t("networkError"));
+}
+
+function _noteLooksReady(payload) {
+  return (
+    Boolean(payload?.success) &&
+    (payload.status === "completed" ||
+      payload.status === "completed_with_warnings" ||
+      Boolean(payload.files?.note_result))
+  );
+}
+
+addParallelProject?.addEventListener("click", () => {
+  prepareParallelProjectForm();
+});
+
+function prepareParallelProjectForm() {
+  projectNumber.value = "";
+  tuFile.value = "";
+  planFile.value = "";
+  updateFileName(tuFile, tuName);
+  updateFileName(planFile, planName);
+  branchPoleType.value = "";
+  currentWireValue = "auto";
+  updateWirePickerUI();
+  syncWireFormFields();
+  updateWireHint();
+  clearNotice();
+  if (activeJobsCount === 0) {
+    resetStatus();
+  }
+  showNotice(t("parallelFormReady"), "success");
+  projectNumber.focus();
+}
+
+function upsertProjectRun(entry) {
+  const index = projectRuns.findIndex((item) => item.id === entry.id);
+  if (index >= 0) {
+    projectRuns[index] = entry;
+  } else {
+    projectRuns.unshift(entry);
+  }
+  renderProjectRuns();
+}
+
+function selectProjectRun(runId) {
+  const entry = projectRuns.find((item) => item.id === runId);
+  if (!entry) return;
+  selectedRunId = runId;
+  lastNoteDownloadUrl = entry.noteUrl || `/api/download/${runId}/note`;
+  setDownloads(Boolean(entry.noteReady));
+  renderProjectRuns();
+}
+
+function ensureProjectsListDelegation() {
+  if (!projectsList || projectsListBound) return;
+  projectsListBound = true;
+  projectsList.addEventListener("click", (event) => {
+    const actionButton = event.target?.closest?.("[data-action]");
+    const card = event.target?.closest?.(".project-run");
+    if (!card) return;
+    const runId = card.dataset.runId;
+    if (actionButton?.dataset?.action === "note") {
+      event.preventDefault();
+      downloadProjectNote(runId);
+      return;
+    }
+    selectProjectRun(runId);
+  });
+}
+
+function renderProjectRuns() {
+  if (!projectsList || !projectsCount) return;
+  ensureProjectsListDelegation();
+  projectsCount.textContent = String(projectRuns.length);
+  if (!projectRuns.length) {
+    projectsList.innerHTML = "";
     return;
   }
 
-  window.location.href = "/api/download/final-pdf";
+  projectsList.innerHTML = projectRuns
+    .map((entry) => {
+      const typeLabel =
+        entry.projectType === "10kv" ? t("projectType10") : t("projectType04");
+      const statusLabel =
+        entry.status === "ready"
+          ? t("projectReady")
+          : entry.status === "error"
+            ? t("projectFailed")
+            : t("projectRunning");
+      const meta =
+        entry.status === "error" && entry.error
+          ? entry.error
+          : `${typeLabel} · ${statusLabel}`;
+      return `
+        <article class="project-run ${entry.id === selectedRunId ? "is-selected" : ""} ${
+          entry.status === "running" ? "is-running" : ""
+        } ${entry.status === "error" ? "is-error" : ""}" data-run-id="${entry.id}">
+          <div class="project-run__title">${escapeHtml(entry.projectNumber)}</div>
+          <div class="project-run__meta">${escapeHtml(meta)}</div>
+          <div class="project-run__actions">
+            <button type="button" data-action="note" ${entry.noteReady ? "" : "disabled"}>
+              ${t("projectDownloadNote")}
+            </button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function downloadProjectNote(runId) {
+  const entry = projectRuns.find((item) => item.id === runId);
+  if (!entry?.noteReady) return;
+  selectProjectRun(runId);
+  window.location.href = entry.noteUrl;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function setYopkPanelOpen(isOpen) {
+  document.body.classList.toggle("is-yopk-panel-open", isOpen);
+  if (yopkPanel) {
+    yopkPanel.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  }
+  if (yopkBackdrop) {
+    yopkBackdrop.hidden = !isOpen;
+  }
+}
+
+function askBranchPoleType() {
+  return new Promise((resolve) => {
+    setYopkPanelOpen(true);
+
+    const cleanup = (value) => {
+      setYopkPanelOpen(false);
+      yopkIntermediate.removeEventListener("click", onIntermediate);
+      yopkAnchor.removeEventListener("click", onAnchor);
+      yopkBackdrop.removeEventListener("click", onCancel);
+      resolve(value);
+    };
+
+    const onIntermediate = () => cleanup("intermediate");
+    const onAnchor = () => cleanup("anchor");
+    const onCancel = () => cleanup("");
+
+    yopkIntermediate.addEventListener("click", onIntermediate);
+    yopkAnchor.addEventListener("click", onAnchor);
+    yopkBackdrop.addEventListener("click", onCancel);
+  });
+}
+
+downloadNote?.addEventListener("click", () => {
+  if (selectedRunId) {
+    downloadProjectNote(selectedRunId);
+    return;
+  }
+  window.location.href = lastNoteDownloadUrl;
 });
+
+if (downloadPdf) {
+  downloadPdf.hidden = true;
+  downloadPdf.disabled = true;
+}
 
 function setCheckPanelOpen(isOpen) {
   document.body.classList.toggle("is-check-panel-open", isOpen);
@@ -946,6 +1388,7 @@ function applyLanguage(animated = false) {
       updateFileName(checkNoteFile, checkNoteName);
       updateWirePickerUI();
       updateWireHint();
+      renderProjectRuns();
       if (!progressTimer) {
         runState.textContent = t("idle");
       } else {
@@ -1142,8 +1585,12 @@ function resetStatus() {
 }
 
 function setDownloads(enabled) {
-  downloadNote.disabled = !enabled;
-  downloadPdf.disabled = !enabled;
+  if (downloadNote) {
+    downloadNote.disabled = !enabled;
+  }
+  if (!enabled && !selectedRunId) {
+    lastNoteDownloadUrl = "/api/download/note";
+  }
 }
 
 function showNotice(message, type) {

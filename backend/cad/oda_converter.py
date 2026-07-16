@@ -6,6 +6,7 @@ import platform
 import shutil
 import stat
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,10 @@ class OdaConverterError(RuntimeError):
     pass
 
 
+# ODA File Converter небезопасен при параллельных запусках на одной машине.
+_ODA_LOCK = threading.Lock()
+
+
 class OdaConverter:
     def __init__(self, project_root: Path, logger: Any | None = None) -> None:
         self.project_root = project_root
@@ -22,6 +27,23 @@ class OdaConverter:
         self.executable = self._find_executable()
 
     def convert_file(
+        self,
+        source_path: Path,
+        output_path: Path,
+        output_format: str,
+        work_dir: Path,
+        output_version: str = "ACAD2018",
+    ) -> Path:
+        with _ODA_LOCK:
+            return self._convert_file_unlocked(
+                source_path,
+                output_path,
+                output_format,
+                work_dir,
+                output_version=output_version,
+            )
+
+    def _convert_file_unlocked(
         self,
         source_path: Path,
         output_path: Path,

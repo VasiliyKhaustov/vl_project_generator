@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import ezdxf
+from ezdxf.lldxf.types import DXFTag, DXFVertex
 
 from backend.core.cable_format import format_sip4_spec_table_kg
 from backend.core.file_utils import copy_file_with_retry
@@ -14,7 +15,10 @@ from backend.core.tu_parser import abbreviate_address_display_terms
 from .oda_converter import OdaConverter
 
 
-PLACEHOLDER_RE = re.compile(r"\{{1,2}[A-Z0-9_]+\}{1,2}")
+# Имена полей: 0,4 кВ (PROJNUMB) и 10 кВ (6-10, SECH_KABEL_10kV, А20).
+# Алгоритм замены тот же — расширен только допустимый charset имени.
+PLACEHOLDER_FIELD_RE = r"[A-Za-zА-Яа-яЁё0-9_\-]+"
+PLACEHOLDER_RE = re.compile(r"\{{1,2}" + PLACEHOLDER_FIELD_RE + r"\}{1,2}")
 
 LEFT_ALIGNED_BODY_MARKERS = (
     "1.   Исходные данные",
@@ -256,6 +260,8 @@ def replace_placeholders_in_dwg_with_oda(
     replacement_map: dict[str, str],
     work_dir: Path,
     logger: Any | None = None,
+    *,
+    preserve_template_structure: bool = False,
 ) -> dict[str, Any]:
     template_dwg_path = Path(template_dwg_path)
     output_dwg_path = Path(output_dwg_path)
@@ -280,20 +286,43 @@ def replace_placeholders_in_dwg_with_oda(
         template_dxf,
         output_format="DXF",
         work_dir=oda_temp_dir / "template_to_dxf",
-        output_version="ACAD2013",
+        # Понижение сложных шаблонов 10 кВ до ACAD2013 удаляет содержимое
+        # части MTEXT (при неизменном количестве объектов). Для 10 кВ
+        # сохраняем исходную ACAD2018-структуру; ветка 0,4 кВ не меняется.
+        output_version="ACAD2018" if preserve_template_structure else "ACAD2013",
     )
     template_placeholders = _find_placeholders_in_dxf(template_dxf)
 
-    replaced_count = _replace_placeholders_in_dxf(template_dxf, filled_dxf, replacement_map, logger)
-    if logger:
-        logger.info("DXF обработан. Конвертирую обратно в DWG через ODA...")
-    converter.convert_file(
+    replaced_count = _replace_placeholders_in_dxf(
+        template_dxf,
         filled_dxf,
-        output_dwg_path,
-        output_format="DWG",
-        work_dir=oda_temp_dir / "filled_to_dwg",
-        output_version="ACAD2018",
+        replacement_map,
+        logger,
+        preserve_template_structure=preserve_template_structure,
     )
+    output_dxf_path: Path | None = None
+    if preserve_template_structure:
+        # ODA при обратной конвертации сложных записок 10 кВ удаляет часть
+        # MTEXT/FIELD. Поэтому заполненный результат сохраняем как DXF без
+        # пересоздания объектов, а DWG оставляем точной копией эталона.
+        output_dxf_path = output_dwg_path.with_suffix(".dxf")
+        copy_file_with_retry(filled_dxf, output_dxf_path, logger=logger)
+        copy_file_with_retry(template_dwg_path, output_dwg_path, logger=logger)
+        if logger:
+            logger.info(
+                "Структура 10 кВ сохранена: заполненный DXF записан без "
+                "пересоздания объектов; DWG оставлен точной копией эталона."
+            )
+    else:
+        if logger:
+            logger.info("DXF обработан. Конвертирую обратно в DWG через ODA...")
+        converter.convert_file(
+            filled_dxf,
+            output_dwg_path,
+            output_format="DWG",
+            work_dir=oda_temp_dir / "filled_to_dwg",
+            output_version="ACAD2018",
+        )
 
     unresolved = _find_placeholders_in_dxf(filled_dxf)
 
@@ -308,6 +337,7 @@ def replace_placeholders_in_dwg_with_oda(
         "success": True,
         "mode": "oda",
         "output_dwg_path": str(output_dwg_path),
+        "output_dxf_path": str(output_dxf_path) if output_dxf_path else None,
         "replaced_count": replaced_count,
         "template_placeholders": template_placeholders,
         "unresolved_placeholders": unresolved,
@@ -371,7 +401,91 @@ def _replace_placeholders_in_dxf(
     output_dxf: Path,
     replacement_map: dict[str, str],
     logger: Any | None = None,
+    *,
+    preserve_template_structure: bool = False,
 ) -> int:
+    if preserve_template_structure:
+        # Меняем только содержимое уже существующих TEXT/MTEXT/ATTRIB.
+        # ezdxf сам корректно разбивает длинный MTEXT на group-code 3/1
+        # (не более 250 символов). Ручное распределение текста по старым
+        # chunks давало невалидные строки >250 и ломало отображение AutoCAD.
+        document = ezdxf.readfile(source_dxf)
+        replaced_count = 0
+        for entity in _iter_text_entities(document):
+            text = _get_text(entity)
+            if not text:
+                continue
+            replaced_text, count = _replace_text(text, replacement_map)
+            if count:
+                _set_text(entity, replaced_text)
+                replaced_count += count
+
+        aligned_tables = _align_adjoining_10kv_tables(document)
+
+        # Ни один объект не создаётся и не удаляется: сохраняются те же handles,
+        # координаты, стили, размеры, повороты и привязки.
+        document.saveas(output_dxf)
+
+        # ACAD_TABLE хранит отображаемые строки внутри существующего proxy-
+        # объекта, а не как отдельные TEXT/MTEXT. Заменяем там только токены.
+        replaced_count += _replace_placeholders_in_raw_dxf(output_dxf, replacement_map)
+
+        # После raw-замены native tags ACAD_TABLE и MTEXT содержат одинаковые
+        # конкретные значения. Только теперь синхронно обновляем обе копии
+        # ячеек длины 0,4 кВ, которые AutoCAD использует для отображения.
+        table_document = ezdxf.readfile(output_dxf)
+        updated_04_cells = _update_10kv_04_length_cells(
+            table_document,
+            replacement_map,
+        )
+        updated_fixed_cells = _update_10kv_fixed_table_cells(
+            table_document,
+            replacement_map,
+        )
+        updated_protection_cells = _update_10kv_transformer_protection_tables(
+            table_document,
+            replacement_map,
+        )
+        cleaned_titles = _cleanup_10kv_title_text(
+            table_document,
+            replacement_map,
+        )
+        if (
+            updated_04_cells
+            or updated_fixed_cells
+            or updated_protection_cells
+            or cleaned_titles
+        ):
+            table_document.saveas(output_dxf)
+        if logger:
+            logger.info(
+                "DXF placeholders replaced in existing entities only: "
+                f"{replaced_count}"
+            )
+            if aligned_tables:
+                logger.info(
+                    "10 kV adjoining tables aligned flush: "
+                    f"{aligned_tables}"
+                )
+            if updated_04_cells:
+                logger.info(
+                    "10 kV 0.4 kV route-length cells updated: "
+                    f"{updated_04_cells}"
+                )
+            if updated_fixed_cells:
+                logger.info(
+                    "10 kV fixed/specification table cells restored: "
+                    f"{updated_fixed_cells}"
+                )
+            if updated_protection_cells:
+                logger.info(
+                    "10 kV transformer protection cells updated: "
+                    f"{updated_protection_cells}"
+                )
+            if cleaned_titles:
+                logger.info(f"10 kV title texts normalized: {cleaned_titles}")
+        return replaced_count
+
     document = ezdxf.readfile(source_dxf)
     replaced_count = 0
 
@@ -444,6 +558,548 @@ def _replace_placeholders_in_dxf(
     return replaced_count
 
 
+def _update_10kv_04_length_cells(
+    document: Any,
+    replacement_map: dict[str, str],
+) -> int:
+    """Обновляет все существующие таблицы, зависящие от длины линии слоя 04."""
+    km_value = str(replacement_map.get("{{KM_04}}", "") or "").strip()
+    reserve_value = str(replacement_map.get("{{KM_04_RESERVE}}", "") or "").strip()
+    weight_value = str(replacement_map.get("{{KG_04}}", "") or "").strip()
+    if not km_value:
+        return 0
+
+    updated = 0
+    for table in document.modelspace().query("ACAD_TABLE"):
+        block_name = str(table.dxf.get("geometry", "") or "")
+        if not block_name or block_name not in document.blocks:
+            continue
+        block = document.blocks[block_name]
+        text_entities = [
+            entity
+            for entity in block
+            if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+        ]
+
+        # Основные показатели и ведомость объёмов: полная длина ВЛИ-0,4 кВ.
+        length_markers = (
+            "строительная длина вли-0,4 кв",
+            "строительная длина линии в т. ч.",
+            "строительная длина линии в т.ч.",
+            "монтаж самонесущего изолированного провода с изолированной несущей жилой",
+        )
+        for marker in text_entities:
+            marker_text = _get_text(marker).casefold()
+            if not any(value in marker_text for value in length_markers):
+                continue
+            candidates = _numeric_cells_to_right(text_entities, marker)
+            if candidates:
+                _set_acad_table_cell_text(table, candidates[-1], km_value)
+                updated += 1
+
+        # Спецификация: длина с запасом 4,5 % и соответствующая масса СИП2.
+        for marker in text_entities:
+            marker_text = _get_text(marker).casefold()
+            if "провод самонесущий с алюминиевыми фазными" not in marker_text:
+                continue
+            candidates = _numeric_cells_to_right(text_entities, marker)
+            if len(candidates) >= 2 and reserve_value and weight_value:
+                _set_acad_table_cell_text(table, candidates[-2], reserve_value)
+                _set_acad_table_cell_text(table, candidates[-1], weight_value)
+                updated += 2
+    return updated
+
+
+def _numeric_cells_to_right(text_entities: list[Any], marker: Any) -> list[Any]:
+    marker_insert = marker.dxf.get("insert", None)
+    if marker_insert is None:
+        return []
+    candidates = []
+    for entity in text_entities:
+        insert = entity.dxf.get("insert", None)
+        plain_text = re.sub(r"\{?\\[^;]+;", "", _get_text(entity)).strip("{} ")
+        if (
+            insert is not None
+            and insert.x > marker_insert.x
+            and abs(insert.y - marker_insert.y) < 0.05
+            and re.fullmatch(r"\d+[,.]\d+|\d+", plain_text)
+        ):
+            candidates.append(entity)
+    return sorted(candidates, key=lambda entity: entity.dxf.insert.x)
+
+
+def _set_acad_table_cell_text(table: Any, entity: Any, value: str) -> None:
+    old_text = _get_text(entity)
+    matches = list(re.finditer(r"\d+(?:[,.]\d+)?", old_text))
+    if matches:
+        match = matches[-1]
+        new_text = old_text[: match.start()] + value + old_text[match.end() :]
+    else:
+        new_text = value
+    _set_text(entity, new_text)
+
+    # ACAD_TABLE дублирует значение ячейки в native tags. AutoCAD отображает
+    # именно их, а не только MTEXT анонимного блока, поэтому меняем оба дубля.
+    table_tags = table.xtags.subclasses[3]
+    for index, tag in enumerate(table_tags):
+        if tag.code in {1, 302} and tag.value == old_text:
+            table_tags[index] = DXFTag(tag.code, new_text)
+
+
+def _update_10kv_fixed_table_cells(
+    document: Any,
+    replacement_map: dict[str, str],
+) -> int:
+    updated = 0
+    support_rows = (
+        ("П20-3Н", "{{P20}}", "{{P201}}"),
+        ("А20-3Н с РЛК", "{{ARLK}}", "{{ARL1}}"),
+        ("УА20-3Н", "{{UA}}", "{{US}}"),
+    )
+    fixed_rows = (
+        ("ТМ73", "{{TM73}}", "{{TM73_KG}}"),
+        ("ТМ74", "{{TM74}}", "{{TM74_KG}}"),
+    )
+
+    for table in document.modelspace().query("ACAD_TABLE"):
+        block_name = str(table.dxf.get("geometry", "") or "")
+        if not block_name or block_name not in document.blocks:
+            continue
+        block = document.blocks[block_name]
+        n_cols = _native_table_column_count(table)
+
+        if n_cols == 10:
+            for marker, quantity_key, mass_key in support_rows + fixed_rows:
+                quantity = str(replacement_map.get(quantity_key, "") or "")
+                mass = str(replacement_map.get(mass_key, "") or "")
+                if quantity and mass and _force_table_row_values(
+                    table,
+                    block,
+                    marker,
+                    (quantity, mass),
+                    native_offsets=(4, 5),
+                ):
+                    updated += 2
+
+            osh_km = str(replacement_map.get("{{OSH_KM}}", "") or "")
+            osh_kg = str(replacement_map.get("{{OSH_KG}}", "") or "")
+            if osh_km and osh_kg and _force_table_row_values(
+                table,
+                block,
+                "0,006",
+                (osh_kg,),
+                native_offsets=(1,),
+            ):
+                updated += 1
+
+            branch_km = str(replacement_map.get("{{BRANCH_04_KM}}", "") or "")
+            branch_kg = str(replacement_map.get("{{BRANCH_04_KG}}", "") or "")
+            if branch_km and branch_kg and _force_table_row_values(
+                table,
+                block,
+                r"\C0;-3х70",
+                (branch_km, branch_kg),
+                native_offsets=(5, 6),
+                text_height=2.5,
+            ):
+                updated += 2
+
+        if n_cols == 6:
+            corpus = " ".join(
+                _get_text(entity)
+                for entity in block
+                if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+            ).casefold()
+            if "изолятор высоковольтный штыревой" in corpus and _force_table_row_values(
+                table,
+                block,
+                "ШФ-20УО",
+                ("3",),
+                native_offsets=(2,),
+                numeric_only=False,
+            ):
+                updated += 1
+    return updated
+
+
+def _update_10kv_transformer_protection_tables(
+    document: Any,
+    replacement_map: dict[str, str],
+) -> int:
+    """Заполняет существующие таблицы защиты по мощности и классу напряжения."""
+    values = tuple(
+        str(replacement_map.get(key, "") or "")
+        for key in (
+            "{{MOSH}}",
+            "{{NOM}}",
+            "{{QF1}}",
+            "{{QF2}}",
+            "{{QF3}}",
+            "{{QF4}}",
+            "{{PLAV}}",
+        )
+    )
+    pred = str(replacement_map.get("{{PRED}}", "") or "")
+    if not pred or not values[0]:
+        return 0
+
+    updated = 0
+    for table in document.query("ACAD_TABLE"):
+        block_name = str(table.dxf.get("geometry", "") or "")
+        if not block_name or block_name not in document.blocks:
+            continue
+        block = document.blocks[block_name]
+        text_entities = [
+            entity
+            for entity in block
+            if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+        ]
+
+        header = next(
+            (
+                entity
+                for entity in text_entities
+                if "номинальная мощность трансфор" in _get_text(entity).casefold()
+            ),
+            None,
+        )
+        if header is not None:
+            row_y = min(
+                (
+                    entity.dxf.insert.y
+                    for entity in text_entities
+                    if entity.dxf.get("insert", None) is not None
+                    and 0 < entity.dxf.insert.x < 170
+                    and entity.dxf.insert.y < header.dxf.insert.y - 10
+                ),
+                default=None,
+            )
+            if row_y is not None:
+                row_entities = sorted(
+                    (
+                        entity
+                        for entity in text_entities
+                        if entity.dxf.get("insert", None) is not None
+                        and 0 < entity.dxf.insert.x < 170
+                        and abs(entity.dxf.insert.y - row_y) < 0.05
+                    ),
+                    key=lambda entity: entity.dxf.insert.x,
+                )
+                if len(row_entities) >= len(values):
+                    for entity, value in zip(row_entities[: len(values)], values):
+                        if value:
+                            _set_text(entity, value)
+                            updated += 1
+                    cell_tags = [
+                        index
+                        for index, tag in enumerate(table.xtags.subclasses[3])
+                        if tag.code == 302
+                    ]
+                    if len(cell_tags) >= len(values):
+                        start_ordinal = len(cell_tags) - len(values)
+                        for offset, value in enumerate(values):
+                            if value:
+                                _set_native_table_cell_by_ordinal(
+                                    table,
+                                    start_ordinal + offset,
+                                    value,
+                                )
+
+        for entity in text_entities:
+            text = _get_text(entity)
+            if "ПКТ" not in text or not re.search(r"\d{3}-\d", text):
+                continue
+            fixed = re.sub(r"\d{3}-\d+(?:[.,]\d+)?", pred, text, count=1)
+            if fixed != text:
+                _set_text(entity, fixed)
+                for index, tag in enumerate(table.xtags.subclasses[3]):
+                    if tag.code in {1, 302} and str(tag.value) == text:
+                        table.xtags.subclasses[3][index] = DXFTag(
+                            tag.code,
+                            fixed,
+                        )
+                updated += 1
+    return updated
+
+
+def _force_table_row_values(
+    table: Any,
+    block: Any,
+    marker: str,
+    values: tuple[str, ...],
+    *,
+    native_offsets: tuple[int, ...],
+    numeric_only: bool = True,
+    text_height: float | None = None,
+) -> bool:
+    text_entities = [
+        entity
+        for entity in block
+        if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+    ]
+    marker_entity = next(
+        (
+            entity
+            for entity in text_entities
+            if marker.casefold() in _get_text(entity).casefold()
+        ),
+        None,
+    )
+    if marker_entity is None:
+        return False
+
+    if numeric_only:
+        same_row = _numeric_cells_to_right(text_entities, marker_entity)
+    else:
+        same_row = [
+            entity
+            for entity in text_entities
+            if entity is not marker_entity
+            and entity.dxf.get("insert", None) is not None
+            and entity.dxf.insert.x > marker_entity.dxf.insert.x
+            and abs(entity.dxf.insert.y - marker_entity.dxf.insert.y) < 0.05
+        ]
+        same_row.sort(key=lambda entity: entity.dxf.insert.x)
+    for entity, value in zip(same_row[-len(values) :], values):
+        _set_acad_table_cell_text(table, entity, value)
+        if text_height is not None and entity.dxftype() == "MTEXT":
+            entity.dxf.char_height = text_height
+
+    for offset, value in zip(native_offsets, values):
+        _set_native_table_cell_relative(
+            table,
+            marker,
+            offset,
+            value,
+            text_height=text_height,
+        )
+    return True
+
+
+def _native_table_column_count(table: Any) -> int:
+    for tag in table.xtags.subclasses[3]:
+        if tag.code == 92:
+            return int(tag.value)
+    return 0
+
+
+def _set_native_table_cell_by_ordinal(
+    table: Any,
+    ordinal: int,
+    value: str,
+) -> None:
+    tags = table.xtags.subclasses[3]
+    cell_tags = [index for index, tag in enumerate(tags) if tag.code == 302]
+    if not 0 <= ordinal < len(cell_tags):
+        return
+    target_index = cell_tags[ordinal]
+    previous_index = cell_tags[ordinal - 1] if ordinal > 0 else -1
+    for index in range(previous_index + 1, target_index):
+        if tags[index].code == 1:
+            tags[index] = DXFTag(1, value)
+        elif tags[index].code == 93:
+            tags[index] = DXFTag(93, 6)
+    tags[target_index] = DXFTag(302, value)
+
+
+def _set_native_table_cell_relative(
+    table: Any,
+    marker: str,
+    offset: int,
+    value: str,
+    *,
+    text_height: float | None = None,
+) -> None:
+    tags = table.xtags.subclasses[3]
+    cell_tags = [index for index, tag in enumerate(tags) if tag.code == 302]
+    marker_ordinal = next(
+        (
+            ordinal
+            for ordinal, index in enumerate(cell_tags)
+            if marker.casefold() in str(tags[index].value).casefold()
+        ),
+        None,
+    )
+    if marker_ordinal is None:
+        return
+    target_ordinal = marker_ordinal + offset
+    if not 0 <= target_ordinal < len(cell_tags):
+        return
+
+    target_index = cell_tags[target_ordinal]
+    previous_index = cell_tags[target_ordinal - 1] if target_ordinal > 0 else -1
+
+    # В части эталонных таблиц пустая ячейка содержит group code 344 —
+    # ссылку на уже отсутствующий FIELD. По формату DXF при наличии 344
+    # AutoCAD обязан игнорировать строки 1/302, поэтому записанное значение
+    # остаётся невидимым. Убираем только битую ссылку внутри этой же ячейки;
+    # ни один объект чертежа при этом не создаётся и не удаляется.
+    stale_field_tags = [
+        index
+        for index in range(previous_index + 1, target_index)
+        if tags[index].code == 344
+    ]
+    for index in reversed(stale_field_tags):
+        del tags[index]
+    target_index -= len(stale_field_tags)
+
+    if text_height is not None:
+        height_index = next(
+            (
+                index
+                for index in range(previous_index + 1, target_index)
+                if tags[index].code == 140
+            ),
+            None,
+        )
+        if height_index is not None:
+            tags[height_index] = DXFTag(140, text_height)
+        else:
+            alignment_index = next(
+                (
+                    index
+                    for index in range(previous_index + 1, target_index)
+                    if tags[index].code == 170
+                ),
+                target_index - 1,
+            )
+            tags.insert(alignment_index + 1, DXFTag(140, text_height))
+            target_index += 1
+
+    native_value = value
+    for index in range(previous_index + 1, target_index):
+        if stale_field_tags and tags[index].code == 172:
+            tags[index] = DXFTag(172, int(tags[index].value) | 8)
+        elif stale_field_tags and tags[index].code == 91:
+            tags[index] = DXFTag(91, int(tags[index].value) | 32)
+        elif tags[index].code == 1:
+            old_value = str(tags[index].value)
+            matches = list(re.finditer(r"\d+(?:[,.]\d+)?", old_value))
+            if matches:
+                match = matches[-1]
+                native_value = (
+                    old_value[: match.start()] + value + old_value[match.end() :]
+                )
+            tags[index] = DXFTag(1, native_value)
+        elif tags[index].code == 93:
+            # 2 означает статическое cached-значение: AutoCAD продолжает
+            # показывать старую (в данном случае пустую) графику ячейки.
+            # Тип 6 заставляет читать обновлённый MTEXT из существующей ячейки.
+            tags[index] = DXFTag(93, 6)
+    tags[target_index] = DXFTag(302, native_value)
+
+
+def _cleanup_10kv_title_text(
+    document: Any,
+    replacement_map: dict[str, str],
+) -> int:
+    project_number = str(replacement_map.get("{{PROJNUMB}}", "") or "")
+    changed = 0
+    for entity in _iter_text_entities(document):
+        text = _get_text(entity)
+        fixed = re.sub(r"ВУ(?=стро)", "ВУ ", text)
+        fixed = re.sub(
+            r"\bкрестьянское\s+фермерское\s+хозяйство\b",
+            "КФХ",
+            fixed,
+            flags=re.IGNORECASE,
+        )
+        fixed = re.sub(
+            r"\b([А-ЯЁа-яё-]+)\s+муниципальный\s+район\b",
+            r"\1 район",
+            fixed,
+            flags=re.IGNORECASE,
+        )
+        if (
+            project_number
+            and "энергопринимающих устройств заявителя" in fixed.casefold()
+        ):
+            fixed = re.sub(
+                rf"\s*\({re.escape(project_number)}\)",
+                "",
+                fixed,
+            )
+        if fixed != text:
+            _set_text(entity, fixed)
+            changed += 1
+    return changed
+
+
+def _align_adjoining_10kv_tables(document: Any) -> int:
+    """Стыкует две существующие ведомости без изменения их содержимого."""
+    upper_marker = "ведомость основных комплектов рабочих чертежей раздела"
+    lower_marker = "ведомость ссылочных и прилагаемых документов"
+    uppers: list[tuple[Any, tuple[float, float, float, float]]] = []
+    lowers: list[tuple[Any, tuple[float, float, float, float]]] = []
+
+    for table in document.modelspace().query("ACAD_TABLE"):
+        block_name = str(table.dxf.get("geometry", "") or "")
+        if not block_name or block_name not in document.blocks:
+            continue
+        block = document.blocks[block_name]
+        text = " ".join(
+            _get_text(entity)
+            for entity in block
+            if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+        ).casefold()
+        bounds = _table_line_bounds(block)
+        if bounds is None:
+            continue
+        if upper_marker in text:
+            uppers.append((table, bounds))
+        elif lower_marker in text:
+            lowers.append((table, bounds))
+
+    aligned = 0
+    used_lower_handles: set[str] = set()
+    for upper, upper_bounds in uppers:
+        upper_insert = upper.dxf.insert
+        candidates = [
+            (lower, bounds)
+            for lower, bounds in lowers
+            if lower.dxf.handle not in used_lower_handles
+            and lower.dxf.insert.y < upper_insert.y
+            and abs(lower.dxf.insert.x - upper_insert.x) < 5.0
+        ]
+        if not candidates:
+            continue
+        lower, lower_bounds = max(candidates, key=lambda item: item[0].dxf.insert.y)
+        lower_insert = lower.dxf.insert
+        upper_bottom = upper_insert.y + upper_bounds[1]
+        lower_top = lower_insert.y + lower_bounds[3]
+        gap = upper_bottom - lower_top
+        if not 0.01 < gap < 10.0:
+            continue
+
+        aligned_x = upper_insert.x + upper_bounds[0] - lower_bounds[0]
+        aligned_insert = (aligned_x, lower_insert.y + gap, lower_insert.z)
+        lower.dxf.insert = aligned_insert
+        # ACAD_TABLE хранится как DXFTagStorage: обычный dxf-setter меняет
+        # значение в памяти, но writer берёт исходный vertex из ExtendedTags.
+        block_reference_tags = lower.xtags.subclasses[2]
+        for index, tag in enumerate(block_reference_tags):
+            if tag.code == 10:
+                block_reference_tags[index] = DXFVertex(10, aligned_insert)
+                break
+        used_lower_handles.add(lower.dxf.handle)
+        aligned += 1
+    return aligned
+
+
+def _table_line_bounds(block: Any) -> tuple[float, float, float, float] | None:
+    points = []
+    for line in block.query("LINE"):
+        points.extend((line.dxf.start, line.dxf.end))
+    if not points:
+        return None
+    return (
+        min(point.x for point in points),
+        min(point.y for point in points),
+        max(point.x for point in points),
+        max(point.y for point in points),
+    )
+
+
 def _find_placeholders_in_dxf(path: Path) -> list[str]:
     document = ezdxf.readfile(path)
     found: set[str] = set()
@@ -503,14 +1159,46 @@ def _replace_commutator_template_sequence(text: str, replacement_map: dict[str, 
 def _placeholder_token_pattern(field_name: str) -> str:
     brace = r"(?:\\\{|\{)"
     close_brace = r"(?:\\\}|\})"
-    return rf"{brace}{{1,2}}{re.escape(field_name)}{close_brace}{{1,2}}"
+    escaped_name = re.escape(field_name)
+    if field_name.startswith("A") and len(field_name) > 1 and field_name[1].isdigit():
+        escaped_name = rf"[AА]{re.escape(field_name[1:])}"
+    return rf"{brace}{{1,2}}{escaped_name}{close_brace}{{1,2}}"
 
 
 def _replace_placeholders_in_raw_dxf(path: Path, replacement_map: dict[str, str]) -> int:
     original_text = path.read_text(encoding="utf-8", errors="replace")
-    text = original_text
-    replaced_text, count = _replace_text(text, replacement_map)
-    if count:
+    count = 0
+    object_pattern = re.compile(
+        r"(^  0\nMTEXT\n.*?)(?=^  0\n[A-Z_]+|\Z)",
+        re.DOTALL | re.MULTILINE,
+    )
+
+    def replace_mtext_object(match: re.Match[str]) -> str:
+        nonlocal count
+        object_text = match.group(1)
+        pairs, tail = _split_object_pairs(object_text)
+        text_indices = [
+            index
+            for index, (code, _) in enumerate(pairs)
+            if code.strip() in {"1", "3"}
+        ]
+        if not text_indices:
+            return object_text
+        full_text = "".join(pairs[index][1] for index in text_indices)
+        replaced_text, object_count = _replace_text(full_text, replacement_map)
+        if not object_count:
+            return object_text
+        _assign_mtext_dxf_chunks(pairs, replaced_text)
+        count += object_count
+        return _rebuild_dxf_object("MTEXT", pairs, tail, object_text)
+
+    # MTEXT может хранить один placeholder в нескольких group-code 3/1.
+    # Соединяем только текстовые части существующего объекта, заменяем токен
+    # и записываем текст обратно в те же group codes.
+    text = object_pattern.sub(replace_mtext_object, original_text)
+    replaced_text, remaining_count = _replace_text(text, replacement_map)
+    count += remaining_count
+    if replaced_text != original_text:
         path.write_text(replaced_text, encoding="utf-8")
     return count
 
@@ -620,7 +1308,7 @@ def _apply_generated_text_cleanup_to_mtext_raw(
 
 
 def _placeholder_name(placeholder: str) -> str:
-    match = re.fullmatch(r"\{\{([A-Z0-9_]+)\}\}", placeholder)
+    match = re.fullmatch(rf"\{{\{{({PLACEHOLDER_FIELD_RE})\}}\}}", placeholder)
     return match.group(1) if match else ""
 
 
@@ -633,19 +1321,31 @@ def _normalize_escaped_braces(text: str) -> str:
     return text.replace(r"\{", "{").replace(r"\}", "}")
 
 
+def canonical_placeholder_key(field_name: str) -> str:
+    """Нормализация имени поля к виду {{NAME}} для карты замен."""
+    normalized = str(field_name or "").strip()
+    if not normalized or not re.fullmatch(PLACEHOLDER_FIELD_RE, normalized):
+        return ""
+    # Кириллическая А в номерах опор → латинская A (как в 0,4 кВ).
+    if normalized.startswith("А") and len(normalized) > 1 and normalized[1].isdigit():
+        normalized = "A" + normalized[1:]
+    return f"{{{{{normalized}}}}}"
+
+
 def _canonical_placeholder(value: str) -> str:
     normalized = _normalize_escaped_braces(value)
     if normalized.startswith("{{") and normalized.endswith("}}"):
-        field_name = normalized[2:-2]
-    elif normalized.startswith("{") and normalized.endswith("}"):
+        return canonical_placeholder_key(normalized[2:-2])
+    if normalized.startswith("{") and normalized.endswith("}"):
         field_name = normalized[1:-1]
         if field_name.isdigit():
             return ""
-    else:
-        return ""
-    if not field_name or not re.fullmatch(r"[A-Z0-9_]+", field_name):
-        return ""
-    return f"{{{{{field_name}}}}}"
+        # Одинарные скобки — только прежний строгий набор 0,4 кВ (без кириллицы/дефиса),
+        # чтобы не цеплять форматирование MTEXT вроде {вертикальный}.
+        if not field_name or not re.fullmatch(r"[A-Z0-9_]+", field_name):
+            return ""
+        return f"{{{{{field_name}}}}}"
+    return ""
 
 
 def _cleanup_generated_text(text: str, replacement_map: dict[str, str] | None = None) -> str:
@@ -1475,26 +2175,22 @@ def _split_mtext_dxf_chunks(text: str, max_len: int = 250) -> tuple[list[str], s
 
 
 def _assign_mtext_dxf_chunks(pairs: list[list[str]], fixed_text: str) -> None:
-    indices_3 = [index for index, (code, _) in enumerate(pairs) if code.strip() == "3"]
-    indices_1 = [index for index, (code, _) in enumerate(pairs) if code.strip() == "1"]
-    chunks, last_chunk = _split_mtext_dxf_chunks(fixed_text)
-
-    for index in indices_3:
-        pairs[index][1] = ""
-    for index in indices_1:
-        pairs[index][1] = ""
-
-    if indices_3:
-        for index, chunk in zip(indices_3, chunks):
-            pairs[index][1] = chunk
-        if indices_1:
-            pairs[indices_1[-1]][1] = last_chunk
-        elif chunks:
-            pairs[indices_3[-1]][1] += last_chunk
+    text_indices = [
+        index
+        for index, (code, _) in enumerate(pairs)
+        if code.strip() in {"1", "3"}
+    ]
+    if not text_indices:
         return
 
-    if indices_1:
-        pairs[indices_1[-1]][1] = fixed_text
+    # Сохраняем ровно те же group-code 3/1, которые уже есть в MTEXT.
+    # Нельзя добавлять новые части объекта и нельзя отбрасывать остаток текста.
+    chunk_size, remainder = divmod(len(fixed_text), len(text_indices))
+    cursor = 0
+    for position, index in enumerate(text_indices):
+        length = chunk_size + (1 if position < remainder else 0)
+        pairs[index][1] = fixed_text[cursor : cursor + length]
+        cursor += length
 
 
 def _apply_mtext_entity_fixes_raw(text: str) -> str:

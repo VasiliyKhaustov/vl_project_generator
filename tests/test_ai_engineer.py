@@ -548,6 +548,44 @@ class AiEngineerTests(unittest.TestCase):
         self.assertIn("УА23*", mixed)
         self.assertNotIn("На связи", mixed)
 
+        straight = local_chat_reply(
+            "у меня длина 300 м сколько заземлений поставить и каких опор поставить "
+            "если к меня 300 метров по прямой"
+        )
+        self.assertIn("8 пролётов", straight)
+        self.assertIn("9 точек", straight)
+        self.assertIn("1 К21", straight)
+        self.assertIn("8 П23", straight)
+        self.assertIn("Заземлений 3", straight)
+        self.assertIn("УА23*", straight)
+        self.assertNotIn("каждые 100 м, и оно должно стоять", straight)
+
+        follow = local_chat_reply(
+            "ну так сколько опор и каких и сколько заземлений",
+            history=[
+                {
+                    "role": "user",
+                    "content": "у меня длина 300 м по прямой",
+                }
+            ],
+        )
+        self.assertIn("1 К21", follow)
+        self.assertIn("Заземлений 3", follow)
+
+        short = local_chat_reply("триста метров прямая скока опор и заземлений")
+        self.assertIn("Заземлений 3", short)
+        self.assertIn("К21", short)
+
+        kv10 = local_chat_reply("10 кв прямая 300 м сколько опор поставить")
+        self.assertIn("70", kv10)
+        self.assertIn("П20-3Н", kv10)
+        self.assertIn("А20-3Н", kv10)
+        self.assertNotIn("Заземлений", kv10)
+
+        vague = local_chat_reply("сколько заземлений и опор поставить")
+        self.assertIn("300 м", vague)
+        self.assertIn("42", vague)
+
         start = local_chat_reply("как начать делать план я первый день")
         self.assertIn("полилини", start)
         self.assertIn("П23", start)

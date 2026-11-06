@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -208,6 +209,21 @@ def _sanitize_upload_filename(filename: str) -> str:
     if not safe_name or safe_name in {".", ".."}:
         raise ValueError(f"Некорректное имя файла: {filename!r}")
     return safe_name
+
+
+def note_download_filename(project_number: str, extension: str) -> str:
+    """Имя скачиваемой записки: «ПСД／48／2026／001-Записка.dwg».
+
+    Обычный слэш в имени файла браузер воспринимает как папку и сохраняет
+    только хвост. Похожий символ ／ оставляет номер проекта целиком.
+    """
+    raw = str(project_number or "").strip()
+    safe = raw.replace("\\", "／").replace("/", "／")
+    safe = re.sub(r'[\x00-\x1f<>:"|?*]', "", safe).strip().rstrip(".")
+    if not safe:
+        safe = "note_result"
+    ext = extension if str(extension).startswith(".") else f".{extension}"
+    return f"{safe}-Записка{ext.lower()}"
 
 
 def _project_archive_folder_name(project_number: str) -> str:

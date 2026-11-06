@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
@@ -415,6 +416,7 @@ def local_chat_reply(
     facts: dict[str, Any] | None = None,
     *,
     has_project: bool = False,
+    history: list[dict[str, str]] | None = None,
 ) -> str:
     """Короткий ответ по вопросу: норма, ошибка на плане, как исправить."""
     query = (question or "").strip()
@@ -456,6 +458,19 @@ def local_chat_reply(
     duplicate_reply = _duplicate_reply(lowered, facts, has_project=has_project)
     if duplicate_reply:
         return sanitize_chat_reply(duplicate_reply)[:1800]
+
+    prior_user = " ".join(
+        str(item.get("content") or "")
+        for item in (history or [])
+        if str(item.get("role") or "") == "user"
+    ).lower().replace("ё", "е")
+    layout_reply = _layout_estimate_reply(
+        lowered,
+        prior_user,
+        has_project=has_project,
+    )
+    if layout_reply:
+        return sanitize_chat_reply(layout_reply)[:1800]
 
     findings_reply = _findings_reply(lowered, facts, has_project=has_project)
     if findings_reply:
@@ -825,6 +840,174 @@ def _project_counts_reply(question: str, facts: dict[str, Any], *, has_project: 
     if "длин" in question and plan.get("длина_м") not in (None, ""):
         return f"Длина трассы 0,4 кВ на этом плане: {plan.get('длина_м')} м."
     return ""
+
+
+def _ru_count(number: int, one: str, few: str, many: str) -> str:
+    value = abs(int(number))
+    if value % 10 == 1 and value % 100 != 11:
+        word = one
+    elif 2 <= value % 10 <= 4 and not 12 <= value % 100 <= 14:
+        word = few
+    else:
+        word = many
+    return f"{value} {word}"
+
+
+def _parse_length_m(text: str) -> float | None:
+    """Длина трассы из бытового вопроса: «300 м», «0,3 км», «триста метров»."""
+    if not text:
+        return None
+    found: list[float] = []
+    for match in re.finditer(
+        r"(\d+(?:[.,]\d+)?)\s*(километр\w*|км|km|метр\w*|м)(?![а-яa-z0-9²³])",
+        text,
+    ):
+        value = float(match.group(1).replace(",", "."))
+        unit = match.group(2)
+        if unit.startswith(("к", "k")):
+            value *= 1000.0
+        if 0 < value <= 20000:
+            found.append(value)
+    if not found:
+        words = (
+            ("полкилометра", 500.0),
+            ("пол км", 500.0),
+            ("девятьсот", 900.0),
+            ("восемьсот", 800.0),
+            ("семьсот", 700.0),
+            ("шестьсот", 600.0),
+            ("пятьсот", 500.0),
+            ("четыреста", 400.0),
+            ("триста", 300.0),
+            ("двести", 200.0),
+            ("тысяча", 1000.0),
+            ("сто", 100.0),
+        )
+        for word, meters in words:
+            if re.search(rf"\b{word}\b", text):
+                found.append(meters)
+                break
+    if not found:
+        labeled = re.search(
+            r"(?:длин\w*|трасс\w*|лини\w*)\D{0,8}(\d+(?:[.,]\d+)?)\b",
+            text,
+        )
+        if labeled:
+            value = float(labeled.group(1).replace(",", "."))
+            if 0 < value <= 20000:
+                found.append(value * 1000.0 if value < 20 and "." in labeled.group(1) else value)
+    if not found:
+        return None
+    # «пролёт 42 м, линия 300 м» — длина трассы больше одного пролёта.
+    return max(found)
+
+
+def _layout_estimate_reply(question: str, prior: str, *, has_project: bool) -> str:
+    """Считает опоры и заземления на названную длину, даже если вопрос бытовой."""
+    asks_this_plan = bool(
+        re.search(r"на этом плане|в (этом )?проекте|у меня на плане|уже стоит", question)
+    )
+    asks_supports = bool(re.search(r"опор|столб", question))
+    asks_ground = "заземл" in question
+    asks_count = bool(
+        re.search(
+            r"сколько|скока|скоко|скольк|каки[хе]|какую|поставить|постав|нужн|расстав|хватит",
+            question,
+        )
+    )
+    if asks_this_plan and _parse_length_m(question) is None:
+        return ""
+    if not asks_count and not asks_supports and not asks_ground:
+        return ""
+    if not (asks_supports or asks_ground or "прям" in question or "длин" in question):
+        # Короткое «ну так сколько» — продолжение, если в прошлом сообщении уже была длина.
+        if not (asks_count and _parse_length_m(prior)):
+            return ""
+        asks_supports = "опор" in prior or "столб" in prior or "опор" in question
+        asks_ground = asks_ground or "заземл" in prior
+    length = _parse_length_m(question) or _parse_length_m(prior)
+    context = f"{prior} {question}"
+    is_10kv = bool(re.search(r"(?<!\d)10\s*кв|10кв", context)) and not re.search(
+        r"0[,.]4|(?<!\d)0\s*кв", question
+    )
+    if length is None:
+        if has_project or not (asks_supports or asks_ground):
+            return ""
+        return (
+            "Напишите длину линии в метрах — тогда скажу точные числа. "
+            "Без длины правило такое: 0,4 кВ, пролёт не больше 42 м, заземление примерно каждые 100 м. "
+            "Прямая 300 м — это 8 пролётов и 9 точек на линии: в конце 1 К21, остальные П23, заземлений 3. "
+            "УА23* только на повороте."
+        )
+
+    if is_10kv:
+        span_m = 70.0
+        spans = max(1, math.ceil(length / span_m - 1e-9))
+        points = spans + 1
+        end_name = "А20-3Н"
+        mid_name = "П20-3Н"
+        corner_name = "УА20-3Н"
+    else:
+        span_m = 42.0
+        spans = max(1, math.ceil(length / span_m - 1e-9))
+        points = spans + 1
+        end_name = "К21"
+        mid_name = "П23"
+        corner_name = "УА23*"
+
+    length_label = f"{length:g}".replace(".", ",")
+    has_corner = bool(re.search(r"угол|поворот|изгиб", question)) and "прям" not in question
+    new_if_start_exists = points - 1
+    mids_if_start_new = points - 1
+    mids_if_start_exists = max(0, points - 2)
+    lines = [
+        f"На {length_label} м это {'линия 10 кВ' if is_10kv else 'линия 0,4 кВ'}.",
+        (
+            f"Пролёт не больше {span_m:g} м: {length_label} м — "
+            f"{_ru_count(spans, 'пролёт', 'пролёта', 'пролётов')}, "
+            f"на линии {_ru_count(points, 'точка', 'точки', 'точек')} (начало и конец тоже считаются)."
+        ),
+    ]
+    if has_corner and not is_10kv:
+        lines.append(
+            f"На повороте до 90° одна опора — {corner_name}, не П23. "
+            f"В конце прямого участка — 1 {end_name}. Остальные прямые участки — {mid_name}."
+        )
+    elif has_corner and is_10kv:
+        lines.append(
+            f"На повороте — {corner_name} (или УП20-3Н, если угол промежуточный). "
+            f"На прямой — {mid_name}. В конце линии — 1 {end_name}."
+        )
+    else:
+        lines.append(
+            f"Раз трасса прямая, угловая {corner_name} не нужна. "
+            f"В конце — 1 {end_name}. Остальные — {mid_name}."
+        )
+        if mids_if_start_exists <= 0:
+            from_existing = f"новых опор одна — {end_name} в конце"
+        else:
+            from_existing = (
+                f"новых опор {_ru_count(new_if_start_exists, 'штука', 'штуки', 'штук')}: "
+                f"{mids_if_start_exists} {mid_name} и 1 {end_name}"
+            )
+        lines.append(
+            f"Если линия начинается от уже стоящей опоры сети, {from_existing}. "
+            f"Если начало тоже новое — {mids_if_start_new} {mid_name} и 1 {end_name}."
+        )
+    if not is_10kv:
+        grounds = max(1, math.ceil(length / 100.0 - 1e-9))
+        lines.append(
+            f"Заземлений {_ru_count(grounds, 'штука', 'штуки', 'штук')}: "
+            "блок «Пл_Заземление» примерно каждые 100 м, не дальше 1 м от полилинии."
+        )
+    elif asks_ground:
+        lines.append(
+            "Шаг заземления «каждые 100 м» в программе задан для 0,4 кВ. "
+            "Для 10 кВ этим шагом число не считаю."
+        )
+    if not is_10kv:
+        lines.append("А23 ставьте только если на прямой нужен анкер: тогда одна П23 меняется на А23.")
+    return " ".join(lines)
 
 
 def _span_or_ground_reply(question: str, facts: dict[str, Any], *, has_project: bool) -> str:

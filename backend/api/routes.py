@@ -30,7 +30,7 @@ from backend.core.calculator_10kv import calculate_materials_10kv
 from backend.core.delivery_distance import DeliveryDistanceError, calculate_delivery_distance_from_tu
 from backend.core.network import run_with_timeout
 from backend.core.dxf_reader import analyze_dxf
-from backend.core.output_manager import OutputManager
+from backend.core.output_manager import OutputManager, note_download_filename
 from backend.core.placeholders_10kv import (
     filter_tu_warnings_10kv,
     template_placeholder_warning_10kv,
@@ -141,15 +141,28 @@ def _read_project_type(run_id: str | None = None) -> str:
     return str(data.get("project_type", "") or "")
 
 
+def _read_project_number(run_id: str | None = None) -> str:
+    output = _output_for_run(run_id)
+    data_path = output.data_dir / "project_data.json"
+    if not data_path.exists():
+        return ""
+    try:
+        data = json.loads(data_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ""
+    return str(data.get("project_number", "") or "").strip()
+
+
 def _resolve_note_download(run_id: str | None = None) -> tuple[Path, str, str]:
     """Возвращает путь, имя файла и media-type для скачивания записки."""
     output = _output_for_run(run_id)
+    project_number = _read_project_number(run_id)
     dxf_path = output.dwg_dir / "note_result.dxf"
     if _read_project_type(run_id) == "10kv" and dxf_path.exists():
-        return dxf_path, "note_result_10kV_filled.dxf", "application/dxf"
+        return dxf_path, note_download_filename(project_number, ".dxf"), "application/dxf"
     dwg_path = output.dwg_dir / "note_result.dwg"
     if dwg_path.exists():
-        return dwg_path, "note_result.dwg", "application/acad"
+        return dwg_path, note_download_filename(project_number, ".dwg"), "application/acad"
     raise HTTPException(
         status_code=404,
         detail="note_result.dxf или note_result.dwg ещё не создан.",
@@ -1176,7 +1189,11 @@ def download_note_dxf() -> FileResponse:
     path = PROJECT_ROOT / "output" / "result" / "dwg" / "note_result.dxf"
     if not path.exists():
         raise HTTPException(status_code=404, detail="note_result.dxf ещё не создан.")
-    return FileResponse(path, filename="note_result.dxf", media_type="application/dxf")
+    return FileResponse(
+        path,
+        filename=note_download_filename(_read_project_number(), ".dxf"),
+        media_type="application/dxf",
+    )
 
 
 @router.get("/download/final-pdf")
@@ -1206,7 +1223,11 @@ def download_note_dxf_for_run(run_id: str) -> FileResponse:
     path = output.dwg_dir / "note_result.dxf"
     if not path.exists():
         raise HTTPException(status_code=404, detail="note_result.dxf ещё не создан.")
-    return FileResponse(path, filename="note_result.dxf", media_type="application/dxf")
+    return FileResponse(
+        path,
+        filename=note_download_filename(_read_project_number(run_id), ".dxf"),
+        media_type="application/dxf",
+    )
 
 
 @router.get("/download/{run_id}/final-pdf")

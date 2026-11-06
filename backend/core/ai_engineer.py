@@ -867,7 +867,7 @@ def chat_with_project(
                 "статус": "проект ещё не сформирован",
                 "что_можно": "нормы ВЛ, арматура, опоры, пролёты, ПП23, как пользоваться программой",
             }
-        local_reply = local_chat_reply(text, facts, has_project=has_project)
+        local_reply = local_chat_reply(text, facts, has_project=has_project, history=history)
     except Exception:
         local_reply = (
             "Могу ответить по нормам ВЛ 0,4 и 10 кВ: опоры, арматура, пролёты, заземления. "

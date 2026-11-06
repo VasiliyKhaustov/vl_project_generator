@@ -25,6 +25,12 @@ class TemplateSelectorTests(unittest.TestCase):
             "template_note_P23.dwg",
         )
 
+    def test_pp23_uses_same_template_as_p23(self) -> None:
+        self.assertEqual(
+            self._select({"P23": 0, "PP23": 4, "A23": 0, "YA23": 0, "K21": 0}).name,
+            "template_note_P23.dwg",
+        )
+
     def test_komapparat_p23_only(self) -> None:
         self.assertEqual(
             self._select({"P23": 2, "A23": 0, "YA23": 0, "K21": 0}, komapparat=True).name,

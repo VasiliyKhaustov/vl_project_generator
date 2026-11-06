@@ -331,6 +331,20 @@ class DeliveryDistanceTests(unittest.TestCase):
         self.assertEqual(result["distanceKm"], 26)
         self.assertEqual(result["resName"], "Грязинский РЭС")
 
+    def test_offline_uses_local_gazetteer_without_maps(self) -> None:
+        with patch("backend.core.delivery_distance.internet_reachable", return_value=False):
+            with patch("backend.core.cadastral_http.request_json") as request_json:
+                result = calculate_delivery_distance_from_tu(
+                    "г. Липецк, кадастровый номер 48:20:0000000:123",
+                    fallback_address="Липецкая область, г. Липецк",
+                )
+        request_json.assert_not_called()
+        self.assertGreater(result["distanceKm"], 0)
+        self.assertIn(
+            result["provider"],
+            {"straight_line_estimate", "nearby_minimum"},
+        )
+
 
 class CadastralExtractorTests(unittest.TestCase):
     def test_extract_multiple_numbers(self) -> None:

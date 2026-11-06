@@ -10,8 +10,11 @@ import ezdxf
 from ezdxf import bbox
 
 
+SUPPORTS_04_KEYS = ("P23", "PP23", "A23", "YA23", "K21")
+
 SUPPORT_BY_BLOCK = {
     "Пл_ОпораП23": "P23",
+    "Пл_ОпораПП23": "PP23",
     "Пл_ОпораНВ_А23": "A23",
     "Пл_ОпораУА23": "YA23",
     "Пл_ОпораНВ_УА23": "YA23",
@@ -19,6 +22,8 @@ SUPPORT_BY_BLOCK = {
 }
 
 SUPPORT_BY_LABEL = {
+    "ПП23": "PP23",
+    "PP23": "PP23",
     "П23": "P23",
     "А23": "A23",
     "УА23*": "YA23",
@@ -57,6 +62,18 @@ GEOREF_COORDINATE_CLUSTER_MIN = 100000.0
 
 GROUND_BLOCKS = {"Пл_Заземление"}
 
+# Слои опор 10 кВ. Динамический блок А20-3Н(+РЛК) часто раскрывается
+# как старый блок Пл_ОпораНВ_А23 — по имени блока его нельзя считать А23.
+SUPPORT_10KV_LAYERS = frozenset(
+    {
+        "Пл_П20-3Н",
+        "Пл_А20-3Н",
+        "Пл_УП20-3Н",
+        "Пл_УА20-3Н",
+        "Пл_А20-3Н_РЛК",
+    }
+)
+
 GENERIC_SUPPORT_BLOCKS = {
     "stolb NN": "K21",
 }
@@ -65,6 +82,7 @@ LEP_SUPPORT_LAYER_MARKERS = ("лэп", "электрика")
 
 SUPPORT_BLOCK_ALIASES: dict[str, frozenset[str]] = {
     "P23": frozenset({"Пл_ОпораП23", "Пл_Опора"}),
+    "PP23": frozenset({"Пл_ОпораПП23", "Пл_ОпораП23", "Пл_Опора"}),
     "A23": frozenset({"Пл_ОпораНВ_А23"}),
     "YA23": frozenset({"Пл_ОпораУА23", "Пл_ОпораНВ_УА23"}),
     "K21": frozenset({"Пл_ОпораК21"}),
@@ -81,7 +99,7 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
     modelspace = document.modelspace()
     warnings: list[str] = []
 
-    supports = Counter({"P23": 0, "A23": 0, "YA23": 0, "K21": 0})
+    supports = Counter({key: 0 for key in SUPPORTS_04_KEYS})
     grounding_count = 0
     anonymous_grounding_count = 0
     ground_block_signatures = _ground_block_signatures(document)
@@ -134,7 +152,7 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
     p23_candidates = [
         candidate
         for candidate in filtered_candidates
-        if candidate["support_type"] == "P23" and not candidate["is_existing"]
+        if candidate["support_type"] in {"P23", "PP23"} and not candidate["is_existing"]
     ]
     k21_candidates = [
         candidate
@@ -200,7 +218,7 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
             continue
         if (
             skip_start_anchor_p23
-            and support_type == "P23"
+            and support_type in {"P23", "PP23"}
             and _is_near_route_point(candidate["point"], route_start, start_anchor_tolerance)
         ):
             skipped_start_anchor_support += 1
@@ -371,6 +389,61 @@ def _is_support_on_route(
     return _distance_to_polyline(point, route_points) <= _support_distance_tolerance(line_length_m)
 
 
+def _insert_plan_point(insert: Any) -> tuple[float, float]:
+    """Точка опоры на плане: геометрия блока, а не dxf.insert.
+
+    В части DWG динамический блок стоит в (0,0), а чертёж опоры
+    лежит в геодезических координатах внутри определения блока.
+    """
+    raw = (float(insert.dxf.insert.x), float(insert.dxf.insert.y))
+    extents = _insert_extents_xy(insert)
+    if extents is None:
+        return raw
+    (x0, y0), (x1, y1) = extents
+    center = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+    if math.hypot(center[0] - raw[0], center[1] - raw[1]) > 5.0:
+        return center
+    return raw
+
+
+def _insert_extents_xy(insert: Any) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    try:
+        extents = bbox.extents([insert], fast=True)
+        min_pt, max_pt = extents.extmin, extents.extmax
+        values = (min_pt.x, min_pt.y, max_pt.x, max_pt.y)
+        if not all(math.isfinite(value) for value in values):
+            return None
+        width = float(max_pt.x) - float(min_pt.x)
+        height = float(max_pt.y) - float(min_pt.y)
+        if width < 0 or height < 0 or width > 80 or height > 80:
+            return None
+        return ((float(min_pt.x), float(min_pt.y)), (float(max_pt.x), float(max_pt.y)))
+    except Exception:
+        return None
+
+
+def _insert_distance_to_polyline(
+    insert: Any,
+    route_points: list[tuple[float, float, float]],
+) -> float:
+    extents = _insert_extents_xy(insert)
+    if extents is None:
+        return _distance_to_polyline(_insert_plan_point(insert), route_points)
+    (x0, y0), (x1, y1) = extents
+    samples = (
+        (x0, y0),
+        (x1, y0),
+        (x0, y1),
+        (x1, y1),
+        ((x0 + x1) / 2.0, (y0 + y1) / 2.0),
+        ((x0 + x1) / 2.0, y0),
+        ((x0 + x1) / 2.0, y1),
+        (x0, (y0 + y1) / 2.0),
+        (x1, (y0 + y1) / 2.0),
+    )
+    return min(_distance_to_polyline(sample, route_points) for sample in samples)
+
+
 def _attribute_catalog_code(insert: Any) -> str:
     for attrib in insert.attribs:
         match = CATALOG_CODE_RE.search(attrib.dxf.text)
@@ -391,6 +464,30 @@ def _normalize_support_label(label: str) -> str:
     return SUPPORT_SHORT_LABELS.get(normalized, SUPPORT_SHORT_LABELS.get(compact, normalized))
 
 
+def _is_pp23_support(label: str, layer: str = "", block_name: str = "") -> bool:
+    """Промежуточная опора 0,4 кВ в габаритах 10 кВ: слой PP23 / подпись ПП23."""
+    layer_key = re.sub(r"[\s_-]+", "", str(layer or "")).upper().replace("Ё", "Е")
+    if layer_key in {"PP23", "ПП23"} or layer_key.endswith("PP23") or layer_key.endswith("ПП23"):
+        return True
+    compact_label = re.sub(r"\s+", "", str(label or "").strip().upper().replace("Ё", "Е"))
+    if compact_label in {"ПП23", "PP23"}:
+        return True
+    block_key = re.sub(r"[\s_-]+", "", str(block_name or "")).upper().replace("Ё", "Е")
+    return "ПП23" in block_key or block_key.endswith("PP23")
+
+
+def _is_10kv_support_marker(label: str, layer: str = "") -> bool:
+    """True, если insert — опора 10 кВ и не должна учитываться как 0,4 кВ."""
+    if layer in SUPPORT_10KV_LAYERS:
+        return True
+    raw = re.sub(r"\s+", "", label.strip().upper().replace("Ё", "Е").replace("–", "-").replace("—", "-"))
+    if not raw:
+        return False
+    if any(marker in raw for marker in ("+КР2", "+KR2", "РЛК", "RLK")):
+        return True
+    return bool(re.match(r"^(У?[ПА]20)([-]?3Н)?", raw))
+
+
 def _resolve_support_type(
     block_name: str,
     label: str,
@@ -399,6 +496,10 @@ def _resolve_support_type(
     *,
     stolb_nn_total: int = 0,
 ) -> str | None:
+    if _is_10kv_support_marker(label, layer):
+        return None
+    if _is_pp23_support(label, layer, block_name):
+        return "PP23"
     normalized_label = _normalize_support_label(label)
     if normalized_label in SUPPORT_BY_LABEL:
         return SUPPORT_BY_LABEL[normalized_label]
@@ -741,14 +842,54 @@ def _is_geometrically_closed(points: list[tuple[float, float, float]], tolerance
     return math.hypot(end[0] - start[0], end[1] - start[1]) <= tolerance
 
 
+def _station_on_polyline(
+    point: tuple[float, float],
+    points: list[tuple[float, float, float]],
+) -> tuple[float, float]:
+    """Возвращает (станция вдоль полилинии, расстояние до неё)."""
+    best_station = 0.0
+    best_distance = math.inf
+    walked = 0.0
+    for start, end in zip(points, points[1:]):
+        sx, sy = start[0], start[1]
+        ex, ey = end[0], end[1]
+        dx = ex - sx
+        dy = ey - sy
+        segment = math.hypot(dx, dy)
+        if segment == 0:
+            continue
+        t = max(0.0, min(1.0, ((point[0] - sx) * dx + (point[1] - sy) * dy) / (segment * segment)))
+        proj_x = sx + t * dx
+        proj_y = sy + t * dy
+        distance = math.hypot(point[0] - proj_x, point[1] - proj_y)
+        station = walked + t * segment
+        if distance < best_distance:
+            best_distance = distance
+            best_station = station
+        walked += segment
+    return best_station, best_distance
+
+
+def _merge_station_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if not intervals:
+        return []
+    ordered = sorted((min(a, b), max(a, b)) for a, b in intervals)
+    merged = [list(ordered[0])]
+    for start, end in ordered[1:]:
+        if start <= merged[-1][1] + 0.5:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(item[0], item[1]) for item in merged]
+
+
 def _dimension_chain_length_for_polyline(
     modelspace: Any,
     points: list[tuple[float, float, float]],
     layer: str,
     geometry_length: float,
 ) -> dict[str, Any] | None:
-    display_values: list[float] = []
-    actual_values: list[float] = []
+    intervals: list[tuple[float, float, float]] = []
     tolerance = max(2.0, min(6.0, geometry_length * 0.04))
 
     for dimension in modelspace.query("DIMENSION"):
@@ -761,25 +902,30 @@ def _dimension_chain_length_for_polyline(
             continue
         p2 = (float(defpoint2.x), float(defpoint2.y))
         p3 = (float(defpoint3.x), float(defpoint3.y))
-        if max(_distance_to_polyline(p2, points), _distance_to_polyline(p3, points)) > tolerance:
+        station_a, dist_a = _station_on_polyline(p2, points)
+        station_b, dist_b = _station_on_polyline(p3, points)
+        if max(dist_a, dist_b) > tolerance:
             continue
         display_value = _display_dimension_value(dimension, actual)
         if display_value <= 0:
             continue
-        display_values.append(display_value)
-        actual_values.append(actual)
+        intervals.append((min(station_a, station_b), max(station_a, station_b), display_value))
 
-    if not display_values:
+    if not intervals:
         return None
 
-    actual_sum = sum(actual_values)
-    if not (geometry_length * 0.65 <= actual_sum <= geometry_length * 1.35):
+    coverage = sum(end - start for start, end in _merge_station_intervals([(a, b) for a, b, _ in intervals]))
+    display_sum = sum(display for _a, _b, display in intervals)
+    # Нахлёст размеров (два пролёта на одном участке) завышает сумму.
+    if display_sum > coverage * 1.03 + 0.5:
+        length = coverage
+    else:
+        length = _snap_dimension_chain_total(display_sum)
+    if not (geometry_length * 0.65 <= length <= geometry_length * 1.35):
         return None
-
-    display_sum = sum(display_values)
     return {
-        "length": _snap_dimension_chain_total(display_sum),
-        "count": len(display_values),
+        "length": length,
+        "count": len(intervals),
     }
 
 

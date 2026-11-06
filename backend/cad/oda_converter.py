@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from backend.core.file_utils import copy_file_with_retry
+
 
 class OdaConverterError(RuntimeError):
     pass
@@ -34,7 +36,11 @@ class OdaConverter:
         work_dir: Path,
         output_version: str = "ACAD2018",
     ) -> Path:
-        with _ODA_LOCK:
+        if not _ODA_LOCK.acquire(timeout=600):
+            raise OdaConverterError(
+                "ODA File Converter занят другим запуском слишком долго. Повторите обработку."
+            )
+        try:
             return self._convert_file_unlocked(
                 source_path,
                 output_path,
@@ -42,6 +48,8 @@ class OdaConverter:
                 work_dir,
                 output_version=output_version,
             )
+        finally:
+            _ODA_LOCK.release()
 
     def _convert_file_unlocked(
         self,
@@ -69,7 +77,7 @@ class OdaConverter:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         input_copy = input_dir / f"{source_path.stem}{source_path.suffix.upper()}"
-        shutil.copy2(source_path, input_copy)
+        copy_file_with_retry(source_path, input_copy, logger=self.logger)
         input_filter = f"*{source_path.suffix.upper()}"
 
         command = [
@@ -102,7 +110,7 @@ class OdaConverter:
 
         if output_path.exists():
             output_path.chmod(output_path.stat().st_mode | stat.S_IWUSR)
-        shutil.copy2(converted, output_path)
+        copy_file_with_retry(converted, output_path, logger=self.logger)
         output_path.chmod(output_path.stat().st_mode | stat.S_IWUSR | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
         self._log(f"ODA converted: {source_path} -> {output_path}")
         return output_path
@@ -110,12 +118,22 @@ class OdaConverter:
     def _run_with_retry(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         last_process: subprocess.CompletedProcess[str] | None = None
         for attempt in range(1, 4):
-            process = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
+            try:
+                process = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except subprocess.TimeoutExpired as exc:
+                self._log(f"ODA не ответил за 180 с (попытка {attempt}/3).")
+                if attempt == 3:
+                    raise OdaConverterError(
+                        "ODA File Converter не ответил за 180 секунд. "
+                        "Закройте окно ODA, если оно открыто, и повторите запуск."
+                    ) from exc
+                time.sleep(1)
+                continue
             last_process = process
             if process.returncode == 0:
                 return process

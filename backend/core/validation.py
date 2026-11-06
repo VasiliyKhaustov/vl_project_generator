@@ -61,6 +61,7 @@ TU_FIELD_LABELS = {
 
 PLAN_SUPPORT_LABELS = {
     "P23": "П23",
+    "PP23": "ПП23",
     "A23": "А23",
     "YA23": "УА23*",
     "K21": "К21",
@@ -68,6 +69,7 @@ PLAN_SUPPORT_LABELS = {
 
 ARMATURE_CHECK_FIELDS = (
     ("P23", "{{P23}}"),
+    ("PP23", "{{PP23}}"),
     ("A23", "{{A23}}"),
     ("YA23", "{{YA23}}"),
     ("K21", "{{K21}}"),
@@ -91,6 +93,7 @@ ARMATURE_CHECK_FIELDS = (
 
 NOTE_VALUE_CHECK_FIELDS = (
     "P23",
+    "PP23",
     "A23",
     "YA23",
     "K21",
@@ -115,6 +118,7 @@ NOTE_VALUE_CHECK_FIELDS = (
 
 ARMATURE_FIELD_LABELS = {
     "P23": "таблица объёмов, опоры П23",
+    "PP23": "таблица объёмов, опоры ПП23",
     "A23": "таблица объёмов, опоры А23",
     "YA23": "таблица объёмов, опоры УА23*",
     "K21": "таблица объёмов, опоры К21",
@@ -492,14 +496,14 @@ def _issues_from_plan_warnings(warnings: list[str]) -> list[ValidationIssue]:
 def _issues_from_plan_data(plan_data: dict[str, Any]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     supports = plan_data.get("supports", {})
-    total = sum(int(supports.get(key, 0) or 0) for key in ("P23", "A23", "YA23", "K21"))
+    total = sum(int(supports.get(key, 0) or 0) for key in ("P23", "PP23", "A23", "YA23", "K21"))
     if total == 0:
         issues.append(
             ValidationIssue(
                 category="plan",
                 severity="error",
                 code="PLAN_NO_SUPPORTS",
-                message="На плане не найдены опоры (П23, А23, УА23*, К21).",
+                message="На плане не найдены опоры (П23, ПП23, А23, УА23*, К21).",
                 location="план DWG/DXF",
             )
         )
@@ -607,7 +611,9 @@ def _build_armature_report(
     tu_data: dict[str, Any],
 ) -> dict[str, Any]:
     supports = plan_data.get("supports", {})
-    p23 = int(supports.get("P23", 0) or 0)
+    p23_regular = int(supports.get("P23", 0) or 0)
+    pp23 = int(supports.get("PP23", 0) or 0)
+    p23 = p23_regular + pp23
     a23 = int(supports.get("A23", 0) or 0)
     ya23 = int(supports.get("YA23", 0) or 0)
     k21 = int(supports.get("K21", 0) or 0)
@@ -642,7 +648,13 @@ def _build_armature_report(
             "field": "P23",
             "label": "Опоры П23",
             "value": p23,
-            "formula": "с плана",
+            "formula": "с плана, ПП23 считается вместе с П23",
+        },
+        {
+            "field": "PP23",
+            "label": "Опоры ПП23 (габарит 10 кВ)",
+            "value": pp23,
+            "formula": "с плана, слой PP23",
         },
         {
             "field": "A23",
@@ -760,7 +772,7 @@ def _build_armature_report(
         },
     ]
     return {
-        "supports": {"P23": p23, "A23": a23, "YA23": ya23, "K21": k21, "total": total},
+        "supports": {"P23": p23, "PP23": pp23, "A23": a23, "YA23": ya23, "K21": k21, "total": total},
         "grounding_count": ground,
         "items": items,
     }
@@ -1005,5 +1017,5 @@ def _public_plan_summary(plan_data: dict[str, Any]) -> dict[str, Any]:
         "supports": supports,
         "grounding_count": plan_data.get("grounding_count"),
         "a3_sheet_count": plan_data.get("a3_sheet_count"),
-        "supports_total": sum(int(supports.get(key, 0) or 0) for key in ("P23", "A23", "YA23", "K21")),
+        "supports_total": sum(int(supports.get(key, 0) or 0) for key in ("P23", "PP23", "A23", "YA23", "K21")),
     }

@@ -64,6 +64,7 @@ def parse_tu(path: Path) -> tuple[dict[str, Any], list[str]]:
         "OTKUDASTROIT": _extract_build_from(text, tp_name),
         "TP_NAME": tp_name,
         "requires_komapparat_template": _requires_komapparat_template(text),
+        "vl_in_10kv_gabarit": _has_10kv_gabarit(text),
         "source_file": path.name,
         "text_length": len(text),
     }
@@ -95,7 +96,7 @@ def build_branch_armature_line(tu_data: dict[str, Any]) -> str:
         return f"Монтаж ответвительной арматуры от коммутационного аппарата {tp_name}"
 
     pole_match = re.search(
-        r"от\s+опоры\s*№\s*([\w/-]+)\s*ВЛИ?\s*0[,.]4\s*кВ\s*фидера\s*№\s*(\d+)",
+        r"от\s+(?:существующ\w+\s+|сущ\.?\s+)?опор[ыеу]\s*№\s*([\w/-]+)\s*ВЛИ?\s*0[,.]4\s*кВ\s*фидера\s*№\s*(\d+)",
         otkuda,
         flags=re.IGNORECASE,
     )
@@ -425,25 +426,66 @@ def _extract_cable_section(text: str) -> str:
 
 
 def _extract_build_from(text: str, tp_name: str = "") -> str:
-    for number, next_number in (("13.2.1", "13.2.2"), ("13.1.1", "13.1.2")):
-        item = _numbered_item(text, number, next_number)
-        if _starts_from_commutator(item):
-            return _commutator_build_phrase(tp_name)
-        value = _build_fragment_from_item(item)
+    # Точка начала ВЛИ — п. 10.1.1 (в старых ТУ тот же смысл у 13.1.1).
+    for number, next_number in (("10.1.1", "10.1.2"), ("13.1.1", "13.1.2")):
+        value = _usable_build_from(_tu_item(text, number, next_number), tp_name)
         if value:
             return value
 
-    value = _search(
-        r"(от\s+опоры\s*№\s*.+?)(?:\s+построить|\s+смонтировать|\s+ориентировочной|$)",
-        text,
+    for number, next_number in (("13.2.1", "13.2.2"), ("10.2.1", "10.2.2")):
+        value = _usable_build_from(_tu_item(text, number, next_number), tp_name)
+        if value:
+            return value
+
+    value = _finish_build_from(
+        _search(
+            r"(от\s+(?:существующ\w+\s+|сущ\.?\s+)?опор[ыеу]\s*№\s*.+?)"
+            r"(?:\s+построить|\s+смонтировать|\s+ориентировочной|\s+ТП\s*№|\s+до\s+границы|$)",
+            text,
+        ),
+        tp_name,
     )
     if value:
-        return _fix_ocr_word_breaks(value).strip(" .;,")
-    return ""
+        return value
+
+    return _finish_build_from(
+        _search(
+            r"Построить\s+ВЛИ\s+0[,.]4\s*кВ\s+(от\s+.+?)(?=\s*ТП\s*№|\s+до\s+границы)",
+            text,
+        ),
+        tp_name,
+    )
 
 
 def _extract_tp_name(text: str) -> str:
     return _search(r"(ТП\s*№\s*[\wА-Яа-яЁё/\- ]+?\s*кВА)", text)
+
+
+def _tu_item(text: str, number: str, next_number: str) -> str:
+    return _numbered_item(text, number, next_number) or _numbered_item_anywhere(
+        text, number, next_number
+    )
+
+
+def _usable_build_from(item: str, tp_name: str = "") -> str:
+    if not item:
+        return ""
+    stop = r"(?:\s+построить|\s+смонтировать|\s+ориентировочной|\s+ТП\s*№|\s+до\s+границы|\s+к\s+границе|$)"
+    pole = _search(
+        rf"(от\s+(?:существующ\w+\s+|сущ\.?\s+)?опор[ыеу]\s*№\s*.+?){stop}",
+        item,
+    )
+    if pole:
+        return _finish_build_from(pole, tp_name)
+    commutator = _search(
+        r"(от\s+коммутационного\s+аппарата(?:\s+по\s+п\.\s*[\d.]+)?\.?)",
+        item,
+    )
+    if commutator:
+        return _finish_build_from(commutator, tp_name)
+    if _starts_from_commutator(item):
+        return _commutator_build_phrase(tp_name)
+    return _finish_build_from(_build_fragment_from_item(item), tp_name)
 
 
 def _starts_from_commutator(value: str) -> bool:
@@ -459,15 +501,16 @@ def _commutator_build_phrase(tp_name: str) -> str:
 
 
 def _requires_komapparat_template(text: str) -> bool:
-    item_13_1_3 = _numbered_item(text, "13.1.3", "13.1.4")
-    if item_13_1_3:
-        return _has_additional_komapparat_requirement(item_13_1_3)
+    for number, next_number in (("13.1.3", "13.1.4"), ("10.1.3", "10.1.4")):
+        item = _tu_item(text, number, next_number)
+        if item and _has_additional_komapparat_requirement(item):
+            return True
+    return False
 
-    match = re.search(
-        r"(?ms)(?:^|\n)\s*13\.1\.3\.\s*(.+?)(?=\n\s*13\.1\.4\.|\Z)",
-        text,
-    )
-    return bool(match and _has_additional_komapparat_requirement(match.group(1)))
+
+def _has_10kv_gabarit(text: str) -> bool:
+    compact = re.sub(r"[\s\-]+", "", (text or "").lower().replace("ё", "е"))
+    return "габаритах10кв" in compact
 
 
 def _has_additional_komapparat_requirement(value: str) -> bool:
@@ -514,6 +557,29 @@ def _numbered_item(text: str, number: str, next_number: str) -> str:
         rf"(?=\n\s*(?:{re.escape(next_number)}|\d+(?:\.\d+)*)\.|\Z)"
     )
     return _search(pattern, text, flags=0)
+
+
+def _numbered_item_anywhere(text: str, number: str, next_number: str) -> str:
+    """Пункт ТУ не всегда начинается с новой строки (PDF склеивает абзацы)."""
+    pattern = (
+        rf"{re.escape(number)}\.\s*(.+?)"
+        rf"(?={re.escape(next_number)}\.|\Z)"
+    )
+    return _search(pattern, text)
+
+
+def _finish_build_from(value: str, tp_name: str = "") -> str:
+    result = _fix_ocr_word_breaks(value or "").strip(" .;,")
+    if not result:
+        return ""
+    result = re.split(r"\s+до\s+границы", result, maxsplit=1, flags=re.IGNORECASE)[0]
+    result = re.split(r"\s+ТП\s*№", result, maxsplit=1, flags=re.IGNORECASE)[0]
+    normalized_tp = _normalize(tp_name)
+    if normalized_tp:
+        index = result.find(normalized_tp)
+        if index > 0:
+            result = result[:index]
+    return result.strip(" .;,")
 
 
 def _address_from_item(item: str) -> str:

@@ -86,7 +86,7 @@ def _format_value(value: Any, field_name: str = "") -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
-        if field_name == "SQUARE":
+        if field_name == "SQUARE" or field_name.upper().startswith("SQUARE_10"):
             return str(int(round(value)))
         if field_name == "SECH_KG":
             return _format_decimal(value, 1)

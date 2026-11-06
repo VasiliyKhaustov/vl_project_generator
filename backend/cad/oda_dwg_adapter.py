@@ -9,7 +9,7 @@ import ezdxf
 from ezdxf.lldxf.types import DXFTag, DXFVertex
 
 from backend.core.cable_format import format_sip4_spec_table_kg
-from backend.core.file_utils import copy_file_with_retry
+from backend.core.file_utils import copy_file_with_retry, local_scratch_dir
 from backend.core.tu_parser import abbreviate_address_display_terms
 
 from .oda_converter import OdaConverter
@@ -83,8 +83,8 @@ BODY_PARAGRAPH_LEFT_ALIGN_MARKERS = (
     "Земельная площадь",
 )
 
-CLIMATE_TABLE_SHIFT_Y = -34.0
-CLIMATE_TABLE_FINE_SHIFT_Y = -8.0
+CLIMATE_TABLE_SHIFT_Y = -18.0
+CLIMATE_TABLE_FINE_SHIFT_Y = 0.0
 TITLE_PAGE_YEAR_PARAGRAPH_GAPS = 2
 REFERENCE_DOCS_TABLE_SHIFT_Y = -4.0
 BODY_TEXT_HEIGHT = 3.0
@@ -167,6 +167,7 @@ SPEC_TABLE_MARKERS = (
 NUMERIC_RESULT_TEXT_FIELDS = (
     "LINE_LENGTH_KM",
     "P23",
+    "PP23",
     "A23",
     "YA23",
     "K21",
@@ -209,6 +210,8 @@ CLIMATE_TABLE_ROW_REPLACEMENTS = (
 )
 
 WORK_TABLE_SUPPORT_MARKERS = {
+    "ПП23": "{{PP23}}",
+    "PP23": "{{PP23}}",
     "П23": "{{P23}}",
     "П 23": "{{P23}}",
     "УП23": "{{P23}}",
@@ -229,6 +232,7 @@ WORK_TABLE_SUPPORT_NAME_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 WORK_TABLE_SUPPORT_TYPE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"УА23\*?|YA23", re.IGNORECASE), "YA23"),
+    (re.compile(r"ПП23|PP23", re.IGNORECASE), "PP23"),
     (re.compile(r"УП23|UP23", re.IGNORECASE), "P23"),
     (re.compile(r"К21|K21", re.IGNORECASE), "K21"),
     (re.compile(r"А23|A23", re.IGNORECASE), "A23"),
@@ -241,6 +245,8 @@ WORK_TABLE_MARKERS = (
     "Монтаж ответвительной",
     "Монтаж самонесущего",
     "Монтаж заземляющего",
+    "Монтаж горизонтального",
+    "Монтаж вертикального",
     "Монтаж счетчика",
     "Монтаж выключателя",
     "Монтаж щита",
@@ -266,15 +272,15 @@ def replace_placeholders_in_dwg_with_oda(
     template_dwg_path = Path(template_dwg_path)
     output_dwg_path = Path(output_dwg_path)
     work_dir = Path(work_dir)
-    temp_dir = work_dir / "temp"
-    oda_temp_dir = temp_dir / "oda_temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
     output_dwg_path.parent.mkdir(parents=True, exist_ok=True)
 
     converter = OdaConverter(project_root=_project_root(), logger=logger)
-    temp_dwg = temp_dir / "template_temp.dwg"
-    template_dxf = temp_dir / "template_temp.dxf"
-    filled_dxf = temp_dir / "filled_temp.dxf"
+    scratch = local_scratch_dir(f"oda_{work_dir.name}")
+    temp_dwg = scratch / "template_temp.dwg"
+    template_dxf = scratch / "template_temp.dxf"
+    filled_dxf = scratch / "filled_temp.dxf"
+    filled_dwg = scratch / "note_result.dwg"
+    oda_temp_dir = scratch / "oda_temp"
 
     if logger:
         logger.info("Начинаю заполнение DWG-записки через ODA...")
@@ -318,11 +324,12 @@ def replace_placeholders_in_dwg_with_oda(
             logger.info("DXF обработан. Конвертирую обратно в DWG через ODA...")
         converter.convert_file(
             filled_dxf,
-            output_dwg_path,
+            filled_dwg,
             output_format="DWG",
             work_dir=oda_temp_dir / "filled_to_dwg",
             output_version="ACAD2018",
         )
+        copy_file_with_retry(filled_dwg, output_dwg_path, logger=logger)
 
     unresolved = _find_placeholders_in_dxf(filled_dxf)
 
@@ -416,11 +423,14 @@ def _replace_placeholders_in_dxf(
             if not text:
                 continue
             replaced_text, count = _replace_text(text, replacement_map)
-            if count:
-                _set_text(entity, replaced_text)
+            cleaned_text = _cleanup_generated_text(replaced_text, replacement_map)
+            if count or cleaned_text != text:
+                _set_text(entity, cleaned_text)
                 replaced_count += count
 
         aligned_tables = _align_adjoining_10kv_tables(document)
+        _move_climate_table_down(document)
+        _fix_work_table_support_quantities(document, replacement_map)
 
         # Ни один объект не создаётся и не удаляется: сохраняются те же handles,
         # координаты, стили, размеры, повороты и привязки.
@@ -428,7 +438,14 @@ def _replace_placeholders_in_dxf(
 
         # ACAD_TABLE хранит отображаемые строки внутри существующего proxy-
         # объекта, а не как отдельные TEXT/MTEXT. Заменяем там только токены.
+        if logger:
+            logger.info(
+                "Тексты в DXF обновлены. Заменяю placeholders в таблицах "
+                "(может занять до минуты)..."
+            )
         replaced_count += _replace_placeholders_in_raw_dxf(output_dxf, replacement_map)
+        _cleanup_raw_dxf_text(output_dxf, replacement_map)
+        _fix_work_table_support_quantities_raw(output_dxf, replacement_map)
 
         # После raw-замены native tags ACAD_TABLE и MTEXT содержат одинаковые
         # конкретные значения. Только теперь синхронно обновляем обе копии
@@ -450,13 +467,9 @@ def _replace_placeholders_in_dxf(
             table_document,
             replacement_map,
         )
-        if (
-            updated_04_cells
-            or updated_fixed_cells
-            or updated_protection_cells
-            or cleaned_titles
-        ):
-            table_document.saveas(output_dxf)
+        _move_climate_table_down(table_document)
+        _fix_work_table_support_quantities(table_document, replacement_map)
+        table_document.saveas(output_dxf)
         if logger:
             logger.info(
                 "DXF placeholders replaced in existing entities only: "
@@ -534,7 +547,6 @@ def _replace_placeholders_in_dxf(
 
     document.saveas(output_dxf)
     _repair_mtext_continuation_group_codes_file(output_dxf)
-    _move_climate_table_down_raw(output_dxf)
     _move_reference_docs_table_down_raw(output_dxf)
     replaced_count += _replace_placeholders_in_raw_dxf(output_dxf, replacement_map)
     _fix_project_indicator_table_values(output_dxf, replacement_map)
@@ -563,14 +575,15 @@ def _update_10kv_04_length_cells(
     replacement_map: dict[str, str],
 ) -> int:
     """Обновляет все существующие таблицы, зависящие от длины линии слоя 04."""
-    km_value = str(replacement_map.get("{{KM_04}}", "") or "").strip()
+    route_value = str(replacement_map.get("{{KM_04_ROUTE}}", "") or "").strip()
+    ktp_value = str(replacement_map.get("{{KTP_ENTRY_KM}}", "") or "").strip()
     reserve_value = str(replacement_map.get("{{KM_04_RESERVE}}", "") or "").strip()
     weight_value = str(replacement_map.get("{{KG_04}}", "") or "").strip()
-    if not km_value:
+    if not route_value and not ktp_value:
         return 0
 
     updated = 0
-    for table in document.modelspace().query("ACAD_TABLE"):
+    for table in document.query("ACAD_TABLE"):
         block_name = str(table.dxf.get("geometry", "") or "")
         if not block_name or block_name not in document.blocks:
             continue
@@ -581,7 +594,7 @@ def _update_10kv_04_length_cells(
             if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
         ]
 
-        # Основные показатели и ведомость объёмов: полная длина ВЛИ-0,4 кВ.
+        ktp_markers = ("ввод в ктп",)
         length_markers = (
             "строительная длина вли-0,4 кв",
             "строительная длина линии в т. ч.",
@@ -590,11 +603,16 @@ def _update_10kv_04_length_cells(
         )
         for marker in text_entities:
             marker_text = _get_text(marker).casefold()
-            if not any(value in marker_text for value in length_markers):
-                continue
             candidates = _numeric_cells_to_right(text_entities, marker)
-            if candidates:
-                _set_acad_table_cell_text(table, candidates[-1], km_value)
+            if not candidates:
+                continue
+            if any(value in marker_text for value in ktp_markers):
+                if ktp_value:
+                    _set_acad_table_cell_text(table, candidates[-1], ktp_value)
+                    updated += 1
+                continue
+            if route_value and any(value in marker_text for value in length_markers):
+                _set_acad_table_cell_text(table, candidates[-1], route_value)
                 updated += 1
 
         # Спецификация: длина с запасом 4,5 % и соответствующая масса СИП2.
@@ -610,6 +628,78 @@ def _update_10kv_04_length_cells(
     return updated
 
 
+_TABLE_CELL_STUB_RE = re.compile(r"-{2,}|#{2,}|\*{2,}")
+_TABLE_CELL_VALUE_RE = re.compile(r"^(?:\d+(?:[,.]\d+)?|-{2,}|#{2,}|\*{2,})$")
+
+
+def _plain_table_cell_text(text: str) -> str:
+    plain = re.sub(r"\{?\\[^;]+;", "", str(text or ""))
+    return plain.replace("{", "").replace("}", "").strip()
+
+
+def _replace_table_cell_value(old_text: str, value: str) -> str:
+    """Подставляет значение в ячейку, не ломая MTEXT-коды вроде \\T0.9;."""
+    old_text = str(old_text or "")
+    value = str(value)
+    if not old_text.strip():
+        return value
+
+    stub = _TABLE_CELL_STUB_RE.search(old_text)
+    if stub:
+        return old_text[: stub.start()] + value + old_text[stub.end() :]
+
+    quantity_value = bool(re.fullmatch(r"\d+(?:[,.]\d+)?", value.strip()))
+
+    def _looks_like_label(text: str) -> bool:
+        # «ШФ20УО» и т.п. — не количество; цифры внутри названия нельзя точечно менять.
+        return bool(re.search(r"[A-Za-zА-Яа-яЁё]", text))
+
+    wrapped = re.fullmatch(r"(\{\\[^;]+;)(.*?)(\})", old_text, flags=re.DOTALL)
+    if wrapped:
+        prefix, content, suffix = wrapped.group(1), wrapped.group(2), wrapped.group(3)
+        stub_in_content = _TABLE_CELL_STUB_RE.search(content)
+        if stub_in_content:
+            return (
+                prefix
+                + content[: stub_in_content.start()]
+                + value
+                + content[stub_in_content.end() :]
+                + suffix
+            )
+        if quantity_value and _looks_like_label(content):
+            return prefix + value + suffix
+        numbers = list(re.finditer(r"\d+(?:[,.]\d+)?", content))
+        if numbers:
+            match = numbers[-1]
+            return prefix + content[: match.start()] + value + content[match.end() :] + suffix
+        if not content.strip():
+            return prefix + value + suffix
+        return prefix + value + suffix
+
+    format_spans = [
+        (match.start(), match.end())
+        for match in re.finditer(r"\\[A-Za-z][^;]*;", old_text)
+    ]
+
+    def _inside_format(pos: int) -> bool:
+        return any(start <= pos < end for start, end in format_spans)
+
+    if quantity_value and _looks_like_label(
+        re.sub(r"\\[A-Za-z][^;]*;", "", old_text)
+    ):
+        return value
+
+    numbers = [
+        match
+        for match in re.finditer(r"\d+(?:[,.]\d+)?", old_text)
+        if not _inside_format(match.start())
+    ]
+    if numbers:
+        match = numbers[-1]
+        return old_text[: match.start()] + value + old_text[match.end() :]
+    return value
+
+
 def _numeric_cells_to_right(text_entities: list[Any], marker: Any) -> list[Any]:
     marker_insert = marker.dxf.get("insert", None)
     if marker_insert is None:
@@ -617,12 +707,12 @@ def _numeric_cells_to_right(text_entities: list[Any], marker: Any) -> list[Any]:
     candidates = []
     for entity in text_entities:
         insert = entity.dxf.get("insert", None)
-        plain_text = re.sub(r"\{?\\[^;]+;", "", _get_text(entity)).strip("{} ")
+        plain_text = _plain_table_cell_text(_get_text(entity))
         if (
             insert is not None
             and insert.x > marker_insert.x
             and abs(insert.y - marker_insert.y) < 0.05
-            and re.fullmatch(r"\d+[,.]\d+|\d+", plain_text)
+            and _TABLE_CELL_VALUE_RE.fullmatch(plain_text)
         ):
             candidates.append(entity)
     return sorted(candidates, key=lambda entity: entity.dxf.insert.x)
@@ -630,12 +720,7 @@ def _numeric_cells_to_right(text_entities: list[Any], marker: Any) -> list[Any]:
 
 def _set_acad_table_cell_text(table: Any, entity: Any, value: str) -> None:
     old_text = _get_text(entity)
-    matches = list(re.finditer(r"\d+(?:[,.]\d+)?", old_text))
-    if matches:
-        match = matches[-1]
-        new_text = old_text[: match.start()] + value + old_text[match.end() :]
-    else:
-        new_text = value
+    new_text = _replace_table_cell_value(old_text, value)
     _set_text(entity, new_text)
 
     # ACAD_TABLE дублирует значение ячейки в native tags. AutoCAD отображает
@@ -654,6 +739,7 @@ def _update_10kv_fixed_table_cells(
     support_rows = (
         ("П20-3Н", "{{P20}}", "{{P201}}"),
         ("А20-3Н с РЛК", "{{ARLK}}", "{{ARL1}}"),
+        ("А20-3Н", "{{A20}}", "{{A201}}"),
         ("УА20-3Н", "{{UA}}", "{{US}}"),
     )
     fixed_rows = (
@@ -661,25 +747,36 @@ def _update_10kv_fixed_table_cells(
         ("ТМ74", "{{TM74}}", "{{TM74_KG}}"),
     )
 
-    for table in document.modelspace().query("ACAD_TABLE"):
+    for table in document.query("ACAD_TABLE"):
         block_name = str(table.dxf.get("geometry", "") or "")
         if not block_name or block_name not in document.blocks:
             continue
         block = document.blocks[block_name]
         n_cols = _native_table_column_count(table)
+        corpus = " ".join(
+            _get_text(entity)
+            for entity in block
+            if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+        ).casefold()
 
         if n_cols == 10:
             for marker, quantity_key, mass_key in support_rows + fixed_rows:
                 quantity = str(replacement_map.get(quantity_key, "") or "")
                 mass = str(replacement_map.get(mass_key, "") or "")
-                if quantity and mass and _force_table_row_values(
+                if not quantity:
+                    continue
+                values = (quantity, mass) if mass else (quantity,)
+                offsets = (4, 5) if mass else (4,)
+                exclude = ("рлк",) if marker == "А20-3Н" else ()
+                if _force_table_row_values(
                     table,
                     block,
                     marker,
-                    (quantity, mass),
-                    native_offsets=(4, 5),
+                    values,
+                    native_offsets=offsets,
+                    exclude_substrings=exclude,
                 ):
-                    updated += 2
+                    updated += len(values)
 
             osh_km = str(replacement_map.get("{{OSH_KM}}", "") or "")
             osh_kg = str(replacement_map.get("{{OSH_KG}}", "") or "")
@@ -704,12 +801,22 @@ def _update_10kv_fixed_table_cells(
             ):
                 updated += 2
 
+            # В части эталонов у F207 нет {{F207}} (ячейка пустая), а у NC20 — есть.
+            # Дозаполняем количество по маркеру F207, при необходимости создаём MTEXT.
+            f207 = str(replacement_map.get("{{F207}}", "") or "")
+            if f207 and _ensure_armature_quantity_cell(
+                table,
+                block,
+                "F207",
+                f207,
+                native_offset=4,
+            ):
+                updated += 1
+
         if n_cols == 6:
-            corpus = " ".join(
-                _get_text(entity)
-                for entity in block
-                if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
-            ).casefold()
+            # В этой таблице (6 кол.) у строки «Изолятор высоковольтный штыревой /
+            # ШФ-20УО» количество фиксировано: 3 шт. Не путать с {{SHF}} (расчёт
+            # арматуры) и не писать в ячейку с названием — иначе ШФ20УО → ШФ3УО.
             if "изолятор высоковольтный штыревой" in corpus and _force_table_row_values(
                 table,
                 block,
@@ -717,8 +824,33 @@ def _update_10kv_fixed_table_cells(
                 ("3",),
                 native_offsets=(2,),
                 numeric_only=False,
+                quantity_cells_only=True,
             ):
                 updated += 1
+
+        if "заземлите" in corpus or "заземляющего спуска" in corpus:
+            grounding_rows = (
+                ("горизонтального заземлителя", "{{H12_10}}", ("контура", "спуск"), ("l=10", "l=10 м", "10 м")),
+                ("горизонтального заземлителя (контура)", "{{H12_8}}", (), ()),
+                ("заземляющего спуска", "{{H12_DROP}}", (), ()),
+            )
+            qty_offset = 4 if n_cols > 4 else max(n_cols - 1, 1)
+            for marker, quantity_key, exclude, required in grounding_rows:
+                quantity = str(replacement_map.get(quantity_key, "") or "")
+                if not quantity:
+                    continue
+                if _force_table_row_values(
+                    table,
+                    block,
+                    marker,
+                    (quantity,),
+                    native_offsets=(qty_offset,),
+                    numeric_only=False,
+                    quantity_cells_only=True,
+                    exclude_substrings=exclude,
+                    required_substrings=required,
+                ):
+                    updated += 1
     return updated
 
 
@@ -822,6 +954,152 @@ def _update_10kv_transformer_protection_tables(
     return updated
 
 
+def _ensure_armature_quantity_cell(
+    table: Any,
+    block: Any,
+    marker: str,
+    value: str,
+    *,
+    native_offset: int = 4,
+) -> bool:
+    """Записывает количество арматуры; если MTEXT ячейки нет — копирует с NC20."""
+    value = str(value or "").strip()
+    if not value:
+        return False
+
+    text_entities = [
+        entity
+        for entity in block
+        if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+    ]
+    marker_entity = next(
+        (
+            entity
+            for entity in text_entities
+            if _get_text(entity).strip() == marker
+        ),
+        None,
+    )
+    if marker_entity is None:
+        return False
+
+    _set_native_table_cell_relative(table, marker, native_offset, value)
+
+    unit_entity = next(
+        (
+            entity
+            for entity in text_entities
+            if _get_text(entity).strip().casefold() == "шт"
+            and entity.dxf.get("insert", None) is not None
+            and entity.dxf.insert.x > marker_entity.dxf.insert.x
+            and abs(entity.dxf.insert.y - marker_entity.dxf.insert.y) < 0.05
+        ),
+        None,
+    )
+    min_x = unit_entity.dxf.insert.x if unit_entity is not None else marker_entity.dxf.insert.x
+    quantity_entities = [
+        entity
+        for entity in text_entities
+        if entity is not marker_entity
+        and entity.dxf.get("insert", None) is not None
+        and entity.dxf.insert.x > min_x
+        and abs(entity.dxf.insert.y - marker_entity.dxf.insert.y) < 0.05
+    ]
+    if quantity_entities:
+        quantity_entities.sort(key=lambda entity: entity.dxf.insert.x)
+        _set_acad_table_cell_text(table, quantity_entities[0], value)
+        return True
+
+    reference = None
+    nc20_label = next(
+        (
+            entity
+            for entity in text_entities
+            if _get_text(entity).strip() == "NC20"
+        ),
+        None,
+    )
+    if nc20_label is not None:
+        nc20_unit = next(
+            (
+                entity
+                for entity in text_entities
+                if _get_text(entity).strip().casefold() == "шт"
+                and entity.dxf.get("insert", None) is not None
+                and entity.dxf.insert.x > nc20_label.dxf.insert.x
+                and abs(entity.dxf.insert.y - nc20_label.dxf.insert.y) < 0.05
+            ),
+            None,
+        )
+        ref_min_x = nc20_unit.dxf.insert.x if nc20_unit is not None else nc20_label.dxf.insert.x
+        refs = [
+            entity
+            for entity in text_entities
+            if entity.dxftype() == "MTEXT"
+            and entity.dxf.get("insert", None) is not None
+            and entity.dxf.insert.x > ref_min_x
+            and abs(entity.dxf.insert.y - nc20_label.dxf.insert.y) < 0.05
+        ]
+        if refs:
+            refs.sort(key=lambda entity: entity.dxf.insert.x)
+            reference = refs[0]
+
+    if reference is None:
+        return True
+
+    attrs = {
+        "insert": (
+            float(reference.dxf.insert.x),
+            float(marker_entity.dxf.insert.y),
+            float(reference.dxf.insert.z),
+        ),
+        "char_height": float(reference.dxf.char_height),
+        "attachment_point": int(reference.dxf.attachment_point),
+        "layer": reference.dxf.layer,
+        "color": int(reference.dxf.color),
+        "style": reference.dxf.style,
+    }
+    if reference.dxf.hasattr("width"):
+        attrs["width"] = float(reference.dxf.width)
+    block.add_mtext(value, dxfattribs=attrs)
+    return True
+
+
+def _is_fillable_quantity_cell_text(text: str) -> bool:
+    """Ячейка количества: число, пусто, stub/placeholder — не название вроде ШФ20УО."""
+    raw = str(text or "")
+    if "{{" in raw:
+        return True
+    plain = _plain_table_cell_text(raw).strip()
+    if not plain:
+        return True
+    if _TABLE_CELL_VALUE_RE.fullmatch(plain):
+        return True
+    if plain in {"-", "–", "—"}:
+        return True
+    # Название изделия с буквами — не трогаем (иначе ШФ20УО → ШФ3УО).
+    if re.search(r"[A-Za-zА-Яа-яЁё]", plain):
+        return False
+    return True
+
+
+def _table_marker_matches(
+    text: str,
+    marker: str,
+    *,
+    exclude_substrings: tuple[str, ...] = (),
+    required_substrings: tuple[str, ...] = (),
+) -> bool:
+    haystack = str(text or "").casefold()
+    if marker.casefold() not in haystack:
+        return False
+    if any(item.casefold() in haystack for item in exclude_substrings):
+        return False
+    if required_substrings and not any(item.casefold() in haystack for item in required_substrings):
+        return False
+    return True
+
+
 def _force_table_row_values(
     table: Any,
     block: Any,
@@ -830,7 +1108,10 @@ def _force_table_row_values(
     *,
     native_offsets: tuple[int, ...],
     numeric_only: bool = True,
+    quantity_cells_only: bool = False,
     text_height: float | None = None,
+    exclude_substrings: tuple[str, ...] = (),
+    required_substrings: tuple[str, ...] = (),
 ) -> bool:
     text_entities = [
         entity
@@ -841,7 +1122,12 @@ def _force_table_row_values(
         (
             entity
             for entity in text_entities
-            if marker.casefold() in _get_text(entity).casefold()
+            if _table_marker_matches(
+                _get_text(entity),
+                marker,
+                exclude_substrings=exclude_substrings,
+                required_substrings=required_substrings,
+            )
         ),
         None,
     )
@@ -860,6 +1146,12 @@ def _force_table_row_values(
             and abs(entity.dxf.insert.y - marker_entity.dxf.insert.y) < 0.05
         ]
         same_row.sort(key=lambda entity: entity.dxf.insert.x)
+        if quantity_cells_only:
+            same_row = [
+                entity
+                for entity in same_row
+                if _is_fillable_quantity_cell_text(_get_text(entity))
+            ]
     for entity, value in zip(same_row[-len(values) :], values):
         _set_acad_table_cell_text(table, entity, value)
         if text_height is not None and entity.dxftype() == "MTEXT":
@@ -872,6 +1164,8 @@ def _force_table_row_values(
             offset,
             value,
             text_height=text_height,
+            exclude_substrings=exclude_substrings,
+            required_substrings=required_substrings,
         )
     return True
 
@@ -909,6 +1203,8 @@ def _set_native_table_cell_relative(
     value: str,
     *,
     text_height: float | None = None,
+    exclude_substrings: tuple[str, ...] = (),
+    required_substrings: tuple[str, ...] = (),
 ) -> None:
     tags = table.xtags.subclasses[3]
     cell_tags = [index for index, tag in enumerate(tags) if tag.code == 302]
@@ -916,7 +1212,12 @@ def _set_native_table_cell_relative(
         (
             ordinal
             for ordinal, index in enumerate(cell_tags)
-            if marker.casefold() in str(tags[index].value).casefold()
+            if _table_marker_matches(
+                str(tags[index].value),
+                marker,
+                exclude_substrings=exclude_substrings,
+                required_substrings=required_substrings,
+            )
         ),
         None,
     )
@@ -966,7 +1267,8 @@ def _set_native_table_cell_relative(
             tags.insert(alignment_index + 1, DXFTag(140, text_height))
             target_index += 1
 
-    native_value = value
+    old_302 = str(tags[target_index].value)
+    native_value = _replace_table_cell_value(old_302, value)
     for index in range(previous_index + 1, target_index):
         if stale_field_tags and tags[index].code == 172:
             tags[index] = DXFTag(172, int(tags[index].value) | 8)
@@ -974,13 +1276,7 @@ def _set_native_table_cell_relative(
             tags[index] = DXFTag(91, int(tags[index].value) | 32)
         elif tags[index].code == 1:
             old_value = str(tags[index].value)
-            matches = list(re.finditer(r"\d+(?:[,.]\d+)?", old_value))
-            if matches:
-                match = matches[-1]
-                native_value = (
-                    old_value[: match.start()] + value + old_value[match.end() :]
-                )
-            tags[index] = DXFTag(1, native_value)
+            tags[index] = DXFTag(1, _replace_table_cell_value(old_value, value))
         elif tags[index].code == 93:
             # 2 означает статическое cached-значение: AutoCAD продолжает
             # показывать старую (в данном случае пустую) графику ячейки.
@@ -994,6 +1290,11 @@ def _cleanup_10kv_title_text(
     replacement_map: dict[str, str],
 ) -> int:
     project_number = str(replacement_map.get("{{PROJNUMB}}", "") or "")
+    contract = str(
+        replacement_map.get("{{CONTRACT}}", "")
+        or replacement_map.get("{{PROJECTNUMBER}}", "")
+        or ""
+    ).strip()
     changed = 0
     for entity in _iter_text_entities(document):
         text = _get_text(entity)
@@ -1010,15 +1311,30 @@ def _cleanup_10kv_title_text(
             fixed,
             flags=re.IGNORECASE,
         )
-        if (
-            project_number
-            and "энергопринимающих устройств заявителя" in fixed.casefold()
-        ):
+        if contract:
             fixed = re.sub(
-                rf"\s*\({re.escape(project_number)}\)",
-                "",
+                r"(Технические условия[^\n\\]*№)\s*(?:ПСД/\d+/\d+/\d+|20\d{2}/\s*\d+)",
+                rf"\g<1>{contract}",
                 fixed,
+                flags=re.IGNORECASE,
             )
+        if "энергопринимающих устройств заявителя" in fixed.casefold():
+            if project_number:
+                fixed = re.sub(
+                    rf"\s*\({re.escape(project_number)}\)",
+                    "",
+                    fixed,
+                )
+            if contract:
+                if re.search(r"\(20\d{2}/\s*\d+", fixed):
+                    fixed = re.sub(r"\(20\d{2}/\s*\d+\)", f"({contract})", fixed)
+                else:
+                    fixed = re.sub(
+                        r"(\s*)$",
+                        lambda match: f" ({contract})" + match.group(1),
+                        fixed.rstrip(),
+                        count=1,
+                    )
         if fixed != text:
             _set_text(entity, fixed)
             changed += 1
@@ -1162,7 +1478,7 @@ def _placeholder_token_pattern(field_name: str) -> str:
     escaped_name = re.escape(field_name)
     if field_name.startswith("A") and len(field_name) > 1 and field_name[1].isdigit():
         escaped_name = rf"[AА]{re.escape(field_name[1:])}"
-    return rf"{brace}{{1,2}}{escaped_name}{close_brace}{{1,2}}"
+    return rf"{brace}{{1,2}}\s*{escaped_name}\s*{close_brace}{{1,2}}"
 
 
 def _replace_placeholders_in_raw_dxf(path: Path, replacement_map: dict[str, str]) -> int:
@@ -1313,8 +1629,16 @@ def _placeholder_name(placeholder: str) -> str:
 
 
 def _replace_placeholder_name(text: str, field_name: str, value: str) -> tuple[str, int]:
+    escaped_name = re.escape(field_name)
+    if field_name.startswith("A") and len(field_name) > 1 and field_name[1].isdigit():
+        escaped_name = rf"[AА]{re.escape(field_name[1:])}"
+    collapsed = re.sub(
+        rf"(?:\\{{|{{)\s*(?:\\{{|{{)\s*{escaped_name}\s*(?:\\}}|}})\s*(?:\\}}|}})",
+        f"{{{{{field_name}}}}}",
+        text,
+    )
     pattern = re.compile(_placeholder_token_pattern(field_name))
-    return pattern.subn(value, text)
+    return pattern.subn(value, collapsed)
 
 
 def _normalize_escaped_braces(text: str) -> str:
@@ -1334,15 +1658,16 @@ def canonical_placeholder_key(field_name: str) -> str:
 
 def _canonical_placeholder(value: str) -> str:
     normalized = _normalize_escaped_braces(value)
+    normalized = re.sub(r"\{\s+", "{", normalized)
+    normalized = re.sub(r"\s+\}", "}", normalized)
     if normalized.startswith("{{") and normalized.endswith("}}"):
         return canonical_placeholder_key(normalized[2:-2])
     if normalized.startswith("{") and normalized.endswith("}"):
         field_name = normalized[1:-1]
         if field_name.isdigit():
             return ""
-        # Одинарные скобки — только прежний строгий набор 0,4 кВ (без кириллицы/дефиса),
-        # чтобы не цеплять форматирование MTEXT вроде {вертикальный}.
-        if not field_name or not re.fullmatch(r"[A-Z0-9_]+", field_name):
+        # Латиница/цифры/дефис (поля 10 кВ: 10kV, 6-10). Кириллица — не placeholder.
+        if not field_name or not re.fullmatch(r"[A-Za-z0-9_\-]+", field_name):
             return ""
         return f"{{{{{field_name}}}}}"
     return ""
@@ -1363,8 +1688,11 @@ def _cleanup_generated_text(text: str, replacement_map: dict[str, str] | None = 
         ",к/н": ", к/н",
         "Автоматизированная система управления II категории технической сложности с количеством каналов (Кобщ): 2": (
             r"Автоматизированная система управления II категории\P"
-            "технической сложности, Кобщ: 2"
+            "технической сложности, Кобщ: 1"
         ),
+        "технической сложности, Кобщ: 2": "технической сложности, Кобщ: 1",
+        "Кобщ): 2": "Кобщ): 1",
+        "Кобщ: 2": "Кобщ: 1",
     }
     result = text
     for old, new in replacements.items():
@@ -1391,6 +1719,7 @@ def _cleanup_generated_text(text: str, replacement_map: dict[str, str] | None = 
         result,
         flags=re.IGNORECASE,
     )
+    result = re.sub(r"([0-9A-Za-zА-Яа-яЁё}])(ТП\s*№)", r"\1 \2", result)
     result = re.sub(r"\bна\s+4\s+модулей\b", "на 4 модуля", result)
     result = re.sub(r"\bна\s+8\s+модуля\b", "на 8 модулей", result)
     result = _remove_visible_mtext_format_fragments(result)
@@ -1398,6 +1727,7 @@ def _cleanup_generated_text(text: str, replacement_map: dict[str, str] | None = 
     if replacement_map:
         result = _apply_project_number_literal_replacements(result, replacement_map)
         result = _apply_address_literal_replacements(result, replacement_map)
+        result = _apply_contract_number_literal_replacements(result, replacement_map)
         result = _apply_commutator_literal_replacements(result, replacement_map)
         result = _apply_calculated_literal_replacements(result, replacement_map)
         result = _apply_climate_literal_replacements(result, replacement_map)
@@ -1465,6 +1795,28 @@ def _apply_project_number_literal_replacements(text: str, replacement_map: dict[
         return f"{project_base}{suffix}"
 
     return re.sub(r"ПСД/48/2026/\d{3}(-[А-ЯA-Z0-9.]+)?", replace, text)
+
+
+def _apply_contract_number_literal_replacements(text: str, replacement_map: dict[str, str]) -> str:
+    contract = str(
+        replacement_map.get("{{CONTRACT}}", "")
+        or replacement_map.get("{{PROJECTNUMBER}}", "")
+        or ""
+    ).strip()
+    if not contract:
+        return text
+    result = re.sub(
+        r"(Технические условия[^\n\\]*№)\s*(?:ПСД/\d+/\d+/\d+|20\d{2}/\s*\d+)",
+        rf"\g<1>{contract}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(
+        r"\(20\d{2}/\s*\d+\)",
+        f"({contract})",
+        result,
+    )
+    return result
 
 
 def _apply_address_literal_replacements(text: str, replacement_map: dict[str, str]) -> str:
@@ -2411,11 +2763,38 @@ def _dedupe_table_cell_text(text: str) -> str:
     return plain
 
 
+def _work_table_computed_field_for_text(text: str) -> str | None:
+    joined = str(text or "").casefold().replace("х", "x")
+    if "кобщ" in joined:
+        return "KOB"
+    if "ввод в ктп" in joined:
+        return "KTP_ENTRY_KM"
+    if "строительная длина" in joined:
+        return "KM_04_ROUTE"
+    if "изолированной несущей жилой" in joined:
+        return "KM_04_ROUTE"
+    if "заземляющего спуска" in joined:
+        return "H12_DROP"
+    if "контура" in joined and "горизонтальн" in joined:
+        return "H12_8"
+    if "горизонтальн" in joined and "заземлите" in joined and (
+        "l=10" in joined or "10 м" in joined or "10м" in joined
+    ):
+        return "H12_10"
+    if "монтаж самонесущего изолированного провода" in joined and "несущей" not in joined:
+        return "BRANCH_04_KM"
+    return None
+
+
 def _work_table_support_field_for_row(row_cells: list[str]) -> str | None:
     if not row_cells:
         return None
 
     name = _dedupe_table_cell_text(row_cells[1] if len(row_cells) > 1 else "")
+    joined = " ".join(_dedupe_table_cell_text(cell) for cell in row_cells).casefold()
+    computed = _work_table_computed_field_for_text(joined or name)
+    if computed:
+        return computed
     if re.search(r"всего\s+опор", name, flags=re.IGNORECASE):
         return "S"
 
@@ -2436,7 +2815,7 @@ def _work_table_support_replacement_value(field_name: str, replacement_map: dict
     value = replacement_map.get(f"{{{{{field_name}}}}}", "")
     if value != "":
         return str(value)
-    if field_name in {"P23", "A23", "YA23", "K21", "S", "GROUND"}:
+    if field_name in {"P23", "PP23", "A23", "YA23", "K21", "S", "GROUND"}:
         return "0"
     return ""
 
@@ -2568,7 +2947,8 @@ def _update_work_table_support_quantities_in_pairs(
         value = _work_table_support_replacement_value(field_name, replacement_map)
         if value == "":
             continue
-        cell_targets[(row_index, WORK_TABLE_QUANTITY_COLUMN_INDEX)] = value
+        qty_col = WORK_TABLE_QUANTITY_COLUMN_INDEX if col_count > 4 else max(col_count - 1, 0)
+        cell_targets[(row_index, qty_col)] = value
 
     if not cell_targets:
         return False
@@ -2636,6 +3016,7 @@ def _fix_work_table_support_quantities(document: Any, replacement_map: dict[str,
             value = replacement_map.get(placeholder, "")
             if value == "" and placeholder in {
                 "{{P23}}",
+                "{{PP23}}",
                 "{{A23}}",
                 "{{YA23}}",
                 "{{K21}}",
@@ -2644,7 +3025,15 @@ def _fix_work_table_support_quantities(document: Any, replacement_map: dict[str,
                 value = "0"
             if not value:
                 continue
+            marker_insert = entity.dxf.get("insert", None)
             for next_entity in entities[index + 1 :]:
+                next_insert = next_entity.dxf.get("insert", None)
+                if (
+                    marker_insert is not None
+                    and next_insert is not None
+                    and next_insert.x <= marker_insert.x + 5
+                ):
+                    continue
                 text = _get_text(next_entity)
                 plain = _plain_mtext(text).replace(",", ".").strip()
                 if plain in {"шт", "м", "км", "м³", "км/кг", "шт/ м³"}:
@@ -3235,7 +3624,14 @@ def _fix_work_table_support_quantities_raw(path: Path, replacement_map: dict[str
 
     def fix_block(match: re.Match[str]) -> str:
         block_text = match.group(1)
-        if not any(marker in _plain_mtext(block_text) for marker in WORK_TABLE_SUPPORT_MARKERS):
+        plain = _plain_mtext(block_text)
+        lowered = plain.casefold()
+        if not (
+            any(marker in plain for marker in WORK_TABLE_SUPPORT_MARKERS)
+            or "заземлите" in lowered
+            or "кобщ" in lowered
+            or "строительная длина" in lowered
+        ):
             return block_text
 
         objects = [object_match.group(1) for object_match in object_pattern.finditer(block_text)]
@@ -3248,6 +3644,7 @@ def _fix_work_table_support_quantities_raw(path: Path, replacement_map: dict[str
             value = replacement_map.get(placeholder, "")
             if value == "" and placeholder in {
                 "{{P23}}",
+                "{{PP23}}",
                 "{{A23}}",
                 "{{YA23}}",
                 "{{K21}}",

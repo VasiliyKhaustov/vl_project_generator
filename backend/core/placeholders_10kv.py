@@ -38,7 +38,7 @@ def template_placeholder_warning_10kv(
 ) -> str | None:
     supports = plan_data.get("supports", {})
     expected: set[str] = set()
-    if int(supports.get("P23") or 0) > 0:
+    if int(supports.get("P23") or 0) > 0 or int(supports.get("PP23") or 0) > 0:
         expected.update({"{{P23}}", "{{P23_1}}", "{{ES15}}"})
     if int(supports.get("A23") or 0) > 0:
         expected.update({"{{A23}}", "{{A231}}", "{{Y4}}"})

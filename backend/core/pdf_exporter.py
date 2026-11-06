@@ -737,7 +737,9 @@ def _split_wide_pdf_pages(pdf_bytes: bytes) -> bytes:
     right_bbox = _ink_bbox(pixmap, split_x, width)
     if left_bbox is None or right_bbox is None:
         return pdf_bytes
-    if not _looks_like_two_sheets(left_bbox, right_bbox, width, height):
+    left_ink = _ink_count(pixmap, 0, split_x)
+    right_ink = _ink_count(pixmap, split_x, width)
+    if not _looks_like_two_sheets(left_bbox, right_bbox, width, height, left_ink, right_ink):
         return pdf_bytes
 
     output = fitz.open()
@@ -817,11 +819,27 @@ def _is_ink(red: int, green: int, blue: int) -> bool:
     return red < 245 or green < 245 or blue < 245
 
 
+def _ink_count(pixmap: fitz.Pixmap, x_start: int, x_end: int) -> int:
+    width = pixmap.width
+    height = pixmap.height
+    samples = pixmap.samples
+    stride = pixmap.n
+    count = 0
+    for x in range(max(0, x_start), min(width, x_end)):
+        for y in range(height):
+            index = (y * width + x) * stride
+            if _is_ink(samples[index], samples[index + 1], samples[index + 2]):
+                count += 1
+    return count
+
+
 def _looks_like_two_sheets(
     left_bbox: tuple[int, int, int, int],
     right_bbox: tuple[int, int, int, int],
     page_width: int,
     page_height: int,
+    left_ink: int = 0,
+    right_ink: int = 0,
 ) -> bool:
     left_width = left_bbox[2] - left_bbox[0] + 1
     right_width = right_bbox[2] - right_bbox[0] + 1
@@ -830,6 +848,10 @@ def _looks_like_two_sheets(
     if min(left_width, right_width) < page_width * 0.15:
         return False
     if min(left_height, right_height) < page_height * 0.35:
+        return False
+    denser = max(left_ink, right_ink)
+    sparser = min(left_ink, right_ink)
+    if denser > 0 and sparser < denser * 0.18:
         return False
     return True
 

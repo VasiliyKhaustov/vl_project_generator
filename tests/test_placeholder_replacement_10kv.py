@@ -9,6 +9,7 @@ from backend.cad.oda_dwg_adapter import (
     _find_placeholders_in_dxf,
     _placeholder_name,
     _replace_placeholder_name,
+    _replace_table_cell_value,
     _replace_text,
     canonical_placeholder_key,
 )
@@ -25,6 +26,18 @@ class PlaceholderReplacement10kVTests(unittest.TestCase):
     def test_canonical_placeholder_accepts_10kv_fields(self) -> None:
         self.assertEqual(_canonical_placeholder("{{6-10}}"), "{{6-10}}")
         self.assertEqual(_canonical_placeholder("{{SECH_KABEL_10kV}}"), "{{SECH_KABEL_10kV}}")
+        self.assertEqual(_canonical_placeholder("{OTKUDASTROIT_10kV}"), "{{OTKUDASTROIT_10kV}}")
+        self.assertEqual(_canonical_placeholder("{ {PS_NAME} }"), "{{PS_NAME}}")
+
+    def test_replace_spaced_10kv_placeholders(self) -> None:
+        text = "ВЛЗ-10 кВ { {OTKUDASTROIT_10kV} } { {PS_NAME} };"
+        replacement_map = {
+            "{{OTKUDASTROIT_10kV}}": "от опоры ВЛ 10 кВ",
+            "{{PS_NAME}}": "ПС Северная",
+        }
+        replaced, count = _replace_text(text, replacement_map)
+        self.assertEqual(count, 2)
+        self.assertEqual(replaced, "ВЛЗ-10 кВ от опоры ВЛ 10 кВ ПС Северная;")
 
     def test_replace_10kv_placeholders_in_text(self) -> None:
         text = "ТП {{6-10}} кВ, 3x({{SECH_KABEL_10kV}}) мм²"
@@ -65,6 +78,21 @@ class PlaceholderReplacement10kVTests(unittest.TestCase):
 
         self.assertEqual([pair[0] for pair in pairs], original_codes)
         self.assertEqual("".join(pair[1] for pair in pairs), replacement)
+
+    def test_table_cell_replace_keeps_mtext_height_and_fills_stub(self) -> None:
+        self.assertEqual(
+            _replace_table_cell_value(r"{\T0.9;----}", "3.239"),
+            r"{\T0.9;3.239}",
+        )
+        self.assertEqual(
+            _replace_table_cell_value(r"{\T0.9;#####}", "3.239"),
+            r"{\T0.9;3.239}",
+        )
+        self.assertEqual(
+            _replace_table_cell_value(r"{\T0.9;0.004}", "0.004"),
+            r"{\T0.9;0.004}",
+        )
+        self.assertEqual(_replace_table_cell_value("", "10"), "10")
 
 
 if __name__ == "__main__":

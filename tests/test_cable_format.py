@@ -36,6 +36,29 @@ class CableFormatTests(unittest.TestCase):
         self.assertEqual(format_sip4_spec_table_kg("4х16"), "0.5")
 
 
+class Pp23MaterialsTests(unittest.TestCase):
+    def test_pp23_uses_p23_armature_and_sv110_poles(self) -> None:
+        materials = calculate_materials(
+            {"FAZE": "трехфазный", "SECH_KABEL": "3x50+1x50"},
+            {
+                "line_length_m": 100,
+                "line_length_km": 0.1,
+                "supports": {"P23": 1, "PP23": 2, "A23": 0, "YA23": 0, "K21": 1},
+                "grounding_count": 2,
+            },
+        )
+        self.assertEqual(materials["P23"], 3)
+        self.assertEqual(materials["PP23"], 2)
+        self.assertEqual(materials["S"], 4)
+        self.assertEqual(materials["ES15"], 3)
+        self.assertEqual(materials["F207"], 3 * 2 + 1 * 2 + 6)
+        self.assertEqual(materials["3"], 1)
+        self.assertEqual(materials["5"], 1 + 2)
+        self.assertAlmostEqual(materials["P23_1"], 1 * 0.36 + 2 * 0.45)
+        self.assertAlmostEqual(materials["31"], 1 * 0.36)
+        self.assertAlmostEqual(materials["51"], 3 * 0.45)
+
+
 class Sip4MaterialsTests(unittest.TestCase):
     def test_materials_include_sip4_fields(self) -> None:
         materials = calculate_materials(

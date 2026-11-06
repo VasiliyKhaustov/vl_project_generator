@@ -14,6 +14,14 @@ _10KV_ONLY_EMPTY_FIELDS = frozenset(
         "{{TO_NAME}}",
     }
 )
+_CONTRACT_NUMBER_RE = re.compile(r"(20\d{2})\s*/\s*(\d{3,})")
+
+
+def format_tu_contract_number(value: str) -> str:
+    match = _CONTRACT_NUMBER_RE.search(str(value or ""))
+    if not match:
+        return str(value or "").strip()
+    return f"{match.group(1)}/ {match.group(2)}"
 
 
 def build_replacement_map_10kv(
@@ -50,10 +58,10 @@ def build_replacement_map_10kv(
         or materials_10kv.get("OTKUDA_STROIT_10kV", "")
         or tu_data.get("OTKUDASTROIT_10kV", "")
         or tu_data.get("OTKUDA_STROIT_10kV", "")
+        or "от опоры ВЛ 10 кВ до РУ 10 кВ"
     )
-    if otkuda_10:
-        _add_if_known(replacement_map, "{{OTKUDASTROIT_10kV}}", otkuda_10)
-        _add_if_known(replacement_map, "{{OTKUDA_STROIT_10kV}}", otkuda_10)
+    _add_if_known(replacement_map, "{{OTKUDASTROIT_10kV}}", otkuda_10)
+    _add_if_known(replacement_map, "{{OTKUDA_STROIT_10kV}}", otkuda_10)
 
     ps_name = materials_10kv.get("PS_NAME", "") or tu_data.get("PS_NAME", "")
     if ps_name:
@@ -61,6 +69,18 @@ def build_replacement_map_10kv(
 
     if materials_10kv.get("A20") is not None:
         _add_if_known(replacement_map, "{{А20}}", materials_10kv["A20"])
+
+    square_10 = materials_10kv.get("SQUARE_10kV")
+    if square_10 in ("", None):
+        square_10 = materials_10kv.get("SQUARE_10")
+    if square_10 not in ("", None):
+        for placeholder in (
+            "{{SQUARE_10kV}}",
+            "{{SQUARE_10kv}}",
+            "{{SQUARE_10KV}}",
+            "{{SQUARE_10}}",
+        ):
+            _add_if_known(replacement_map, placeholder, square_10)
 
     line_length_km = materials_data.get("LINE_LENGTH_KM")
     if line_length_km not in ("", None):
@@ -73,7 +93,27 @@ def build_replacement_map_10kv(
     if otkuda_10:
         _add_if_known(replacement_map, "{{OTKUDASTROIT}}", otkuda_10)
 
-    _add_if_known(replacement_map, "{{PROJECTNUMBER}}", project_number)
+    # В шаблонах 10 кВ {{PROJECTNUMBER}} — номер договора из ТУ (2025/ 123104),
+    # а не ПСД с фронтенда. ПСД остаётся в {{PROJNUMB}}.
+    contract = format_tu_contract_number(str(tu_data.get("PROJECTNUMBER") or ""))
+    if contract:
+        _add_if_known(replacement_map, "{{PROJECTNUMBER}}", contract)
+        _add_if_known(replacement_map, "{{CONTRACT}}", contract)
+
+    voltage_ratio = (
+        str(materials_10kv.get("6-10") or tu_data.get("6-10") or "").strip()
+        or "10/0,4"
+    )
+    replacement_map["{{6-10}}"] = voltage_ratio
+
+    mosh = str(materials_10kv.get("MOSH") or tu_data.get("MOSH") or "").strip()
+    if mosh:
+        replacement_map["{{MOSH}}"] = mosh
+    else:
+        replacement_map["{{MOSH}}"] = "—"
+        for key in ("{{PRED}}", "{{PLAV}}", "{{NOM}}", "{{QF1}}", "{{QF2}}", "{{QF3}}", "{{QF4}}"):
+            if key not in replacement_map or not str(replacement_map.get(key) or "").strip():
+                replacement_map[key] = "—"
 
     return replacement_map
 

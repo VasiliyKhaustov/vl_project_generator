@@ -27,15 +27,49 @@ let activeJobsCount = 0;
 let projectsListBound = false;
 const projectRuns = [];
 const statusItems = [...document.querySelectorAll(".status-item")];
+const statusProgressBar = document.querySelector("#statusProgressBar");
+const statusProgressValue = document.querySelector("#statusProgressValue");
 const cursorLight = document.querySelector("#cursorLight");
-const liquidTargets = [...document.querySelectorAll(".liquid-control")];
 const themeToggle = document.querySelector("#themeToggle");
+const settingsMenu = document.querySelector("#settingsMenu");
+const settingsTrigger = document.querySelector("#settingsTrigger");
+const settingsPanel = document.querySelector("#settingsPanel");
 const languagePicker = document.querySelector("#languagePicker");
 const languageTrigger = document.querySelector("#languageTrigger");
 const languageMenu = document.querySelector("#languageMenu");
 const languageFlag = document.querySelector("#languageFlag");
 const languageName = document.querySelector("#languageName");
 const languageOptions = [...document.querySelectorAll("#languageMenu .language-picker__option")];
+const liveStatusPanel = document.querySelector("#liveStatusPanel");
+const statusIdleHint = document.querySelector("#statusIdleHint");
+const projectsPanel = document.querySelector("#projectsPanel");
+const benefitCards = [...document.querySelectorAll(".benefit-card[data-stage]")];
+const workspaceRoot = document.querySelector("#workspaceRoot");
+const workspaceTabs = [...document.querySelectorAll("[data-workspace-tab]")];
+const openAiEngineerTab = document.querySelector("#openAiEngineerTab");
+const aiEngineerTabButton = document.querySelector("#aiEngineerTabButton");
+const aiEngineerPanel = document.querySelector("#aiEngineerPanel");
+const aiEngineerIdle = document.querySelector("#aiEngineerIdle");
+const aiEngineerReport = document.querySelector("#aiEngineerReport");
+const aiEngineerScore = document.querySelector("#aiEngineerScore");
+const aiEngineerSummary = document.querySelector("#aiEngineerSummary");
+const aiEngineerChecked = document.querySelector("#aiEngineerChecked");
+const aiEngineerPlacement = document.querySelector("#aiEngineerPlacement");
+const aiEngineerFindings = document.querySelector("#aiEngineerFindings");
+const aiEngineerFindingsCount = document.querySelector("#aiEngineerFindingsCount");
+const aiEngineerDisclaimer = document.querySelector("#aiEngineerDisclaimer");
+const aiEngineerModeBadge = document.querySelector("#aiEngineerModeBadge");
+const aiEngineerChat = document.querySelector("#aiEngineerChat");
+const aiEngineerChatLog = document.querySelector("#aiEngineerChatLog");
+const aiEngineerChatForm = document.querySelector("#aiEngineerChatForm");
+const aiEngineerChatInput = document.querySelector("#aiEngineerChatInput");
+const aiEngineerChatSend = document.querySelector("#aiEngineerChatSend");
+const aiEngineerChatStatus = document.querySelector("#aiEngineerChatStatus");
+const aiEngineerChatTyping = document.querySelector("#aiEngineerChatTyping");
+let aiChatRunId = "";
+let aiChatBusy = false;
+let aiChatHasProject = false;
+let aiReportFetchSeq = 0;
 const openCheckPanel = document.querySelector("#openCheckPanel");
 const closeCheckPanel = document.querySelector("#closeCheckPanel");
 const checkPanel = document.querySelector("#checkPanel");
@@ -83,8 +117,13 @@ const translations = {
     brand: "Автоматизация ТУ",
     systemStatus: "Инженерная система подготовки документации",
     languageLabel: "Язык",
+    themeLabel: "Тема",
+    settingsOpen: "Настройки",
+    settingsTitle: "Настройки",
     themeLight: "Светлая тема",
     themeDark: "Темная тема",
+    statusIdleTitle: "Очередь и прогресс",
+    statusIdleText: "После запуска здесь появится ход обработки и список проектов.",
     eyebrow: "Локальный инженерный контур",
     heroTitle: "Автоматизация подготовки документации по ТУ",
     heroCopy: "Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку.",
@@ -109,29 +148,72 @@ const translations = {
     noFile: "Файл не выбран",
     processingStatus: "Статус обработки",
     stepFiles: "Файлы загружены",
-    stepTu: "Данные из ТУ извлечены",
-    stepPlan: "План проанализирован",
-    stepMap: "Карта замен создана",
-    stepDwg: "Записка заполнена",
+    stepTu: "ТУ проанализированы",
+    stepPlan: "Анализ плана",
+    stepMap: "Создание карты замен",
+    stepDwg: "Генерация записки",
     stepDone: "Готово",
-    cardOneTitle: "Заполнить записку",
-    cardOneText: "Введите номер, добавьте ТУ и план — система подготовит DWG-записку с нужными данными.",
-    cardTwoTitle: "Проверить план",
-    cardTwoText: "Приложение посчитает длину линии, опоры и заземления без изменения исходного чертежа.",
-    cardThreeTitle: "Собрать комплект",
-    cardThreeText: "После обработки можно скачать готовую записку по каждому проекту отдельно.",
+    cardOneTitle: "Определяет тип проекта",
+    cardOneText: "Сама понимает, это 0,4 кВ или 10 кВ: читает ТУ и план, выбирает нужный шаблон записки.",
+    cardTwoTitle: "Читает готовый план",
+    cardTwoText: "Считает длину линии, опоры и заземления. Чертёж не меняет — только извлекает данные.",
+    cardThreeTitle: "Собирает записку",
+    cardThreeText: "Подставляет номер проекта, данные из ТУ и расчёты в копию шаблона и отдаёт файл на скачивание.",
+    tabProject: "Проект",
+    aiEngineerTab: "AI Engineer",
+    aiEngineerEyebrow: "Пост-проверка готового проекта",
+    aiEngineerTitle: "AI Engineer",
+    aiEngineerIdleTitle: "Отчёт появится после генерации",
+    aiEngineerIdleText:
+      "Сначала сформируйте проект на вкладке «Проект». AI Engineer не меняет файлы — только даёт рекомендации.",
+    aiEngineerScoreLabel: "Общий рейтинг проекта",
+    aiEngineerCheckedTitle: "Что проверено",
+    aiEngineerFindingsTitle: "Замечания",
+    aiEngineerDisclaimer:
+      "Все замечания — рекомендации. AI Engineer не изменяет проект автоматически.",
+    aiEngineerNoFindings: "Замечаний нет",
+    aiEngineerOneFinding: "1 рекомендация",
+    aiEngineerManyFindings: "{count} рекомендаций",
+    aiEngineerCriticalNone: "🟢 Критических замечаний нет",
+    aiEngineerModeRules: "Правила",
+    aiEngineerModeLlm: "Правила + LLM",
+    aiEngineerViewAction: "Почему?",
+    aiEngineerHideAction: "Скрыть",
+    aiEngineerFixAction: "Как решить?",
+    aiEngineerHideFixAction: "Скрыть решение",
+    aiEngineerChatTitle: "Инженер в чате",
+    aiEngineerChatLive: "Онлайн · знает этот проект",
+    aiEngineerChatStandby: "Онлайн · нормы и правила",
+    aiEngineerChatGhostUser: "Сколько F207 на А23?",
+    aiEngineerChatGhostBot: "Можно спрашивать и без проекта: нормы, арматура, ПП23. Когда записка готова — разберём замечания по вашему плану.",
+    aiEngineerChatHint:
+      "Спросите по нормам ВЛ или по этому проекту. Проект не обязателен — Luna отвечает и без него.",
+    aiEngineerChatPlaceholder: "Спросите по нормам или по проекту…",
+    aiEngineerChatSend: "Спросить",
+    aiEngineerChatWait: "Думаю…",
+    aiEngineerChatEmpty: "Задайте вопрос — например, чем ПП23 отличается от П23.",
+    aiEngineerChatYou: "Вы",
+    aiEngineerChatBot: "AI Engineer",
+    aiEngineerChatNeedProject: "Сначала сформируйте проект.",
+    aiEngineerChatError: "Не удалось получить ответ. Проверьте, что программа запущена, и спросите ещё раз.",
+    aiEngineerGeometryAlert: "AI Engineer: опоры/заземления не на полилинии 0,4 кВ",
+    aiEngineerCardAlert: "AI: исправить план",
     footer: "Автоматизация ТУ — инженерный инструмент для подготовки проектной документации",
     dockStart: "Старт",
     dockNote: "Скачать записку",
     dockPdf: "Скачать PDF",
     addParallelProject: "Параллельный проект",
-    projectsListTitle: "Готовые проекты",
-    projectsListHint: "Можно запустить второй проект параллельно и скачать каждый отдельно.",
+    projectsListTitle: "Очередь проектов",
+    projectsListHint: "Локальный сервер: проекты идут параллельно, у каждого свой прогресс и скачивание.",
     parallelFormReady: "Форма очищена. Загрузите ТУ и план для следующего проекта — предыдущие скачивания сохранятся.",
     projectRunning: "Обрабатывается…",
     projectReady: "Готов к скачиванию",
     projectFailed: "Ошибка",
-    projectDownloadNote: "Записка",
+    projectCardTitle: "Проект {code}",
+    projectStageReady: "Готов",
+    projectStageFailed: "Ошибка",
+    projectStageRunning: "Обработка…",
+    projectDownloadNote: "Скачать",
     projectDownloadPdf: "PDF",
     projectType04: "0,4 кВ",
     projectType10: "10 кВ",
@@ -192,8 +274,13 @@ const translations = {
     brand: "TU Automation",
     systemStatus: "Engineering documentation system",
     languageLabel: "Language",
+    themeLabel: "Theme",
+    settingsOpen: "Settings",
+    settingsTitle: "Settings",
     themeLight: "Light theme",
     themeDark: "Dark theme",
+    statusIdleTitle: "Queue and progress",
+    statusIdleText: "After you start, processing progress and the project list appear here.",
     eyebrow: "Local engineering workspace",
     heroTitle: "Automated TU documentation preparation",
     heroCopy: "Upload TU and a finished DWG/DXF plan, enter the project number, and the system will prepare the note and PDF package.",
@@ -218,29 +305,70 @@ const translations = {
     noFile: "No file selected",
     processingStatus: "Processing status",
     stepFiles: "Files uploaded",
-    stepTu: "TU data extracted",
-    stepPlan: "Plan analyzed",
-    stepMap: "Replacement map created",
-    stepDwg: "Note filled",
+    stepTu: "TU analyzed",
+    stepPlan: "Plan analysis",
+    stepMap: "Replacement map",
+    stepDwg: "Note generation",
     stepDone: "Done",
-    cardOneTitle: "Fill the note",
-    cardOneText: "Enter the number, add TU and the plan, and the system prepares the DWG note with the required data.",
-    cardTwoTitle: "Check the plan",
-    cardTwoText: "The app counts line length, supports, and grounding without changing the source drawing.",
-    cardThreeTitle: "Build the package",
-    cardThreeText: "After processing, download the note and final PDF when export is available.",
+    cardOneTitle: "Detects project type",
+    cardOneText: "Automatically tells 0.4 kV from 10 kV using the TU and plan, then picks the matching note template.",
+    cardTwoTitle: "Reads the finished plan",
+    cardTwoText: "Counts line length, supports, and grounding. The drawing stays unchanged — data only.",
+    cardThreeTitle: "Builds the note",
+    cardThreeText: "Fills a template copy with the project number, TU data, and calculations, then offers the file for download.",
+    tabProject: "Project",
+    aiEngineerTab: "AI Engineer",
+    aiEngineerEyebrow: "Post-check of the finished project",
+    aiEngineerTitle: "AI Engineer",
+    aiEngineerIdleTitle: "Report appears after generation",
+    aiEngineerIdleText:
+      "Generate a project on the Project tab first. AI Engineer never changes files — it only recommends reviews.",
+    aiEngineerScoreLabel: "Overall project rating",
+    aiEngineerCheckedTitle: "Checked",
+    aiEngineerFindingsTitle: "Findings",
+    aiEngineerDisclaimer: "All findings are recommendations. AI Engineer never modifies the project.",
+    aiEngineerNoFindings: "No findings",
+    aiEngineerOneFinding: "1 recommendation",
+    aiEngineerManyFindings: "{count} recommendations",
+    aiEngineerCriticalNone: "🟢 No critical findings",
+    aiEngineerModeRules: "Rules",
+    aiEngineerModeLlm: "Rules + LLM",
+    aiEngineerViewAction: "Why?",
+    aiEngineerHideAction: "Hide",
+    aiEngineerFixAction: "How to fix?",
+    aiEngineerHideFixAction: "Hide fix",
+    aiEngineerChatTitle: "Engineer on chat",
+    aiEngineerChatLive: "Online · knows this project",
+    aiEngineerChatStandby: "Online · norms and rules",
+    aiEngineerChatGhostUser: "How many F207 on A23?",
+    aiEngineerChatGhostBot: "You can ask without a project: norms, hardware, PP23. After the note is built, we’ll go through findings on your plan.",
+    aiEngineerChatHint: "Ask about VL norms or this project. A project is optional — Luna answers either way.",
+    aiEngineerChatPlaceholder: "Ask about norms or this project…",
+    aiEngineerChatSend: "Ask",
+    aiEngineerChatWait: "Thinking…",
+    aiEngineerChatEmpty: "Ask a question — for example, how PP23 differs from P23.",
+    aiEngineerChatYou: "You",
+    aiEngineerChatBot: "AI Engineer",
+    aiEngineerChatNeedProject: "Generate a project first.",
+    aiEngineerChatError: "Could not get a reply.",
+    aiEngineerGeometryAlert: "AI Engineer: supports/groundings are off the 0.4 kV polyline",
+    aiEngineerCardAlert: "AI: fix the plan",
     footer: "TU Automation — an engineering tool for project documentation",
     dockStart: "Start",
     dockNote: "Download note",
     dockPdf: "Download PDF",
     addParallelProject: "Parallel project",
-    projectsListTitle: "Ready projects",
-    projectsListHint: "You can start a second project in parallel and download each one separately.",
+    projectsListTitle: "Project queue",
+    projectsListHint: "Local server feel: projects run in parallel with their own progress and downloads.",
     parallelFormReady: "Form cleared. Upload TU and plan for the next project — previous downloads stay available.",
     projectRunning: "Processing…",
     projectReady: "Ready to download",
     projectFailed: "Error",
-    projectDownloadNote: "Note",
+    projectCardTitle: "Project {code}",
+    projectStageReady: "Ready",
+    projectStageFailed: "Error",
+    projectStageRunning: "Processing…",
+    projectDownloadNote: "Download",
     projectDownloadPdf: "PDF",
     projectType04: "0.4 kV",
     projectType10: "10 kV",
@@ -300,8 +428,13 @@ const translations = {
     brand: "TU-Automatisierung",
     systemStatus: "System fur technische Dokumentation",
     languageLabel: "Sprache",
+    themeLabel: "Thema",
+    settingsOpen: "Einstellungen",
+    settingsTitle: "Einstellungen",
     themeLight: "Helles Design",
     themeDark: "Dunkles Design",
+    statusIdleTitle: "Warteschlange und Fortschritt",
+    statusIdleText: "Nach dem Start erscheinen hier der Fortschritt und die Projektliste.",
     eyebrow: "Lokaler Engineering-Arbeitsbereich",
     heroTitle: "Automatisierte Dokumentation nach TU",
     heroCopy: "Laden Sie TU und den fertigen DWG/DXF-Plan hoch, geben Sie die Projektnummer ein, und das System erstellt Notiz und PDF-Paket.",
@@ -326,21 +459,73 @@ const translations = {
     noFile: "Keine Datei ausgewahlt",
     processingStatus: "Bearbeitungsstatus",
     stepFiles: "Dateien geladen",
-    stepTu: "TU-Daten gelesen",
-    stepPlan: "Plan analysiert",
-    stepMap: "Ersetzungskarte erstellt",
-    stepDwg: "Notiz ausgefullt",
+    stepTu: "TU analysiert",
+    stepPlan: "Plananalyse",
+    stepMap: "Ersetzungskarte",
+    stepDwg: "Notiz erzeugen",
     stepDone: "Fertig",
-    cardOneTitle: "Notiz ausfullen",
-    cardOneText: "Nummer eingeben, TU und Plan hinzufugen — das System erstellt die DWG-Notiz mit den passenden Daten.",
-    cardTwoTitle: "Plan prufen",
-    cardTwoText: "Die App zahlt Leitungslange, Stutzen und Erdungen ohne die Quelldatei zu andern.",
-    cardThreeTitle: "Paket erstellen",
-    cardThreeText: "Nach der Verarbeitung konnen Notiz und PDF heruntergeladen werden, sobald der Export verfugbar ist.",
+    cardOneTitle: "Erkennt den Projekttyp",
+    cardOneText: "Unterscheidet selbst 0,4 kV und 10 kV anhand von TU und Plan und wählt die passende Notiz-Vorlage.",
+    cardTwoTitle: "Liest den fertigen Plan",
+    cardTwoText: "Zählt Leitungslänge, Stützen und Erdungen. Die Zeichnung bleibt unverändert — nur Daten.",
+    cardThreeTitle: "Erstellt die Notiz",
+    cardThreeText: "Füllt eine Vorlagenkopie mit Projektnummer, TU-Daten und Berechnungen und stellt die Datei zum Download bereit.",
+    tabProject: "Projekt",
+    aiEngineerTab: "AI Engineer",
+    aiEngineerEyebrow: "Nachprufung des fertigen Projekts",
+    aiEngineerTitle: "AI Engineer",
+    aiEngineerIdleTitle: "Bericht erscheint nach der Generierung",
+    aiEngineerIdleText:
+      "Erstellen Sie zuerst ein Projekt. AI Engineer andert keine Dateien — nur Empfehlungen.",
+    aiEngineerScoreLabel: "Gesamtbewertung",
+    aiEngineerCheckedTitle: "Gepruft",
+    aiEngineerFindingsTitle: "Hinweise",
+    aiEngineerDisclaimer: "Alle Hinweise sind Empfehlungen. AI Engineer andert das Projekt nicht.",
+    aiEngineerNoFindings: "Keine Hinweise",
+    aiEngineerOneFinding: "1 Empfehlung",
+    aiEngineerManyFindings: "{count} Empfehlungen",
+    aiEngineerCriticalNone: "🟢 Keine kritischen Hinweise",
+    aiEngineerModeRules: "Regeln",
+    aiEngineerModeLlm: "Regeln + LLM",
+    aiEngineerViewAction: "Warum?",
+    aiEngineerHideAction: "Ausblenden",
+    aiEngineerFixAction: "Wie lösen?",
+    aiEngineerHideFixAction: "Lösung ausblenden",
+    aiEngineerChatTitle: "Ingenieur im Chat",
+    aiEngineerChatLive: "Online · kennt dieses Projekt",
+    aiEngineerChatStandby: "Online · Normen und Regeln",
+    aiEngineerChatGhostUser: "Wie viele F207 an A23?",
+    aiEngineerChatGhostBot: "Fragen Sie auch ohne Projekt: Normen, Armaturen, PP23. Ist die Notiz fertig, gehen wir die Hinweise zum Plan durch.",
+    aiEngineerChatHint: "Fragen zu VL-Normen oder zu diesem Projekt. Ein Projekt ist optional — Luna antwortet so oder so.",
+    aiEngineerChatPlaceholder: "Frage zu Normen oder zum Projekt…",
+    aiEngineerChatSend: "Fragen",
+    aiEngineerChatWait: "Denke nach…",
+    aiEngineerChatEmpty: "Stellen Sie eine Frage — z. B. worin sich PP23 von P23 unterscheidet.",
+    aiEngineerChatYou: "Sie",
+    aiEngineerChatBot: "AI Engineer",
+    aiEngineerChatNeedProject: "Zuerst ein Projekt erzeugen.",
+    aiEngineerChatError: "Antwort fehlgeschlagen.",
+    aiEngineerGeometryAlert: "AI Engineer: Stuetzen/Erdungen nicht auf der 0,4-kV-Polylinie",
+    aiEngineerCardAlert: "AI: Plan korrigieren",
     footer: "TU-Automatisierung — Werkzeug fur Projektdokumentation",
     dockStart: "Start",
     dockNote: "Notiz laden",
     dockPdf: "PDF laden",
+    addParallelProject: "Paralleles Projekt",
+    projectsListTitle: "Projektwarteschlange",
+    projectsListHint: "Lokaler Server: Projekte laufen parallel mit eigenem Fortschritt und Download.",
+    parallelFormReady: "Form freigemacht. TU und Plan fur das nachste Projekt laden.",
+    projectRunning: "Wird bearbeitet…",
+    projectReady: "Bereit zum Download",
+    projectFailed: "Fehler",
+    projectCardTitle: "Projekt {code}",
+    projectStageReady: "Fertig",
+    projectStageFailed: "Fehler",
+    projectStageRunning: "Verarbeitung…",
+    projectDownloadNote: "Laden",
+    projectDownloadPdf: "PDF",
+    projectType04: "0,4 kV",
+    projectType10: "10 kV",
     stateFiles: "Dateien ubertragen",
     stateTu: "TU lesen",
     statePlan: "Plan analysieren",
@@ -390,8 +575,13 @@ const translations = {
     brand: "Automazione TU",
     systemStatus: "Sistema per documentazione tecnica",
     languageLabel: "Lingua",
+    themeLabel: "Tema",
+    settingsOpen: "Impostazioni",
+    settingsTitle: "Impostazioni",
     themeLight: "Tema chiaro",
     themeDark: "Tema scuro",
+    statusIdleTitle: "Coda e progresso",
+    statusIdleText: "Dopo l'avvio qui compaiono il progresso e l'elenco dei progetti.",
     eyebrow: "Area tecnica locale",
     heroTitle: "Preparazione automatica della documentazione TU",
     heroCopy: "Carica TU e il piano DWG/DXF pronto, inserisci il numero di progetto e il sistema preparera la nota e il pacchetto PDF.",
@@ -416,21 +606,73 @@ const translations = {
     noFile: "Nessun file selezionato",
     processingStatus: "Stato elaborazione",
     stepFiles: "File caricati",
-    stepTu: "Dati TU estratti",
-    stepPlan: "Piano analizzato",
-    stepMap: "Mappa sostituzioni creata",
-    stepDwg: "Nota compilata",
+    stepTu: "TU analizzati",
+    stepPlan: "Analisi piano",
+    stepMap: "Mappa sostituzioni",
+    stepDwg: "Generazione nota",
     stepDone: "Pronto",
-    cardOneTitle: "Compila la nota",
-    cardOneText: "Inserisci il numero, aggiungi TU e piano: il sistema prepara la nota DWG con i dati necessari.",
-    cardTwoTitle: "Controlla il piano",
-    cardTwoText: "L'app calcola lunghezza linea, sostegni e messa a terra senza modificare il disegno sorgente.",
-    cardThreeTitle: "Crea il pacchetto",
-    cardThreeText: "Dopo l'elaborazione puoi scaricare la nota e il PDF finale quando l'esportazione e disponibile.",
+    cardOneTitle: "Rileva il tipo di progetto",
+    cardOneText: "Capisce da sola se è 0,4 kV o 10 kV dal TU e dal piano, poi sceglie il modello di nota adatto.",
+    cardTwoTitle: "Legge il piano pronto",
+    cardTwoText: "Calcola lunghezza linea, sostegni e messa a terra. Il disegno non cambia — solo i dati.",
+    cardThreeTitle: "Prepara la nota",
+    cardThreeText: "Compila una copia del modello con numero progetto, dati TU e calcoli, poi offre il file per il download.",
+    tabProject: "Progetto",
+    aiEngineerTab: "AI Engineer",
+    aiEngineerEyebrow: "Verifica post-generazione",
+    aiEngineerTitle: "AI Engineer",
+    aiEngineerIdleTitle: "Il report appare dopo la generazione",
+    aiEngineerIdleText:
+      "Prima genera un progetto. AI Engineer non modifica i file — solo raccomandazioni.",
+    aiEngineerScoreLabel: "Valutazione complessiva",
+    aiEngineerCheckedTitle: "Controllato",
+    aiEngineerFindingsTitle: "Osservazioni",
+    aiEngineerDisclaimer: "Tutte le osservazioni sono raccomandazioni. AI Engineer non modifica il progetto.",
+    aiEngineerNoFindings: "Nessuna osservazione",
+    aiEngineerOneFinding: "1 raccomandazione",
+    aiEngineerManyFindings: "{count} raccomandazioni",
+    aiEngineerCriticalNone: "🟢 Nessun rilievo critico",
+    aiEngineerModeRules: "Regole",
+    aiEngineerModeLlm: "Regole + LLM",
+    aiEngineerViewAction: "Perché?",
+    aiEngineerHideAction: "Nascondi",
+    aiEngineerFixAction: "Come risolvere?",
+    aiEngineerHideFixAction: "Nascondi soluzione",
+    aiEngineerChatTitle: "Ingegnere in chat",
+    aiEngineerChatLive: "Online · conosce questo progetto",
+    aiEngineerChatStandby: "Online · norme e regole",
+    aiEngineerChatGhostUser: "Quanti F207 su A23?",
+    aiEngineerChatGhostBot: "Puoi chiedere anche senza progetto: norme, armature, PP23. Quando la nota è pronta, analizziamo i rilievi del piano.",
+    aiEngineerChatHint: "Chiedi sulle norme VL o su questo progetto. Il progetto è opzionale — Luna risponde comunque.",
+    aiEngineerChatPlaceholder: "Domanda su norme o sul progetto…",
+    aiEngineerChatSend: "Chiedi",
+    aiEngineerChatWait: "Sto pensando…",
+    aiEngineerChatEmpty: "Fai una domanda — ad esempio in cosa PP23 differisce da P23.",
+    aiEngineerChatYou: "Tu",
+    aiEngineerChatBot: "AI Engineer",
+    aiEngineerChatNeedProject: "Prima genera un progetto.",
+    aiEngineerChatError: "Impossibile ottenere una risposta.",
+    aiEngineerGeometryAlert: "AI Engineer: sostegni/messa a terra fuori dalla polilinea 0,4 kV",
+    aiEngineerCardAlert: "AI: correggi il piano",
     footer: "Automazione TU — strumento tecnico per documentazione di progetto",
     dockStart: "Avvia",
     dockNote: "Scarica nota",
     dockPdf: "Scarica PDF",
+    addParallelProject: "Progetto parallelo",
+    projectsListTitle: "Coda progetti",
+    projectsListHint: "Server locale: i progetti avanzano in parallelo con progresso e download propri.",
+    parallelFormReady: "Modulo svuotato. Carica TU e piano per il progetto successivo.",
+    projectRunning: "In elaborazione…",
+    projectReady: "Pronto al download",
+    projectFailed: "Errore",
+    projectCardTitle: "Progetto {code}",
+    projectStageReady: "Pronto",
+    projectStageFailed: "Errore",
+    projectStageRunning: "Elaborazione…",
+    projectDownloadNote: "Scarica",
+    projectDownloadPdf: "PDF",
+    projectType04: "0,4 kV",
+    projectType10: "10 kV",
     stateFiles: "Invio file",
     stateTu: "Lettura TU",
     statePlan: "Analisi piano",
@@ -481,57 +723,31 @@ const translations = {
 let currentLanguage = localStorage.getItem("tu-language") || "ru";
 let currentTheme = localStorage.getItem("tu-theme") || "dark";
 let progressTimer = null;
-let progressIndex = 0;
+let displayedOverallProgress = 0;
 let languageAnimationTimers = [];
 let themeAnimationTimer = null;
 
 const statusTimeline = [
-  { step: "files_uploaded", stateKey: "stateFiles" },
-  { step: "tu_extracted", stateKey: "stateTu" },
-  { step: "plan_analyzed", stateKey: "statePlan" },
-  { step: "replacement_map_created", stateKey: "stateMap" },
-  { step: "dwg_filled", stateKey: "stateDwg" },
-  { step: "completed", stateKey: "statePdf" },
+  { step: "files_uploaded", stateKey: "stateFiles", labelKey: "stepFiles" },
+  { step: "tu_extracted", stateKey: "stateTu", labelKey: "stepTu" },
+  { step: "plan_analyzed", stateKey: "statePlan", labelKey: "stepPlan" },
+  { step: "replacement_map_created", stateKey: "stateMap", labelKey: "stepMap" },
+  { step: "dwg_filled", stateKey: "stateDwg", labelKey: "stepDwg" },
+  { step: "completed", stateKey: "statePdf", labelKey: "stepDone" },
 ];
 
-let cursorFrame = 0;
-let pendingCursorX = 0;
-let pendingCursorY = 0;
-window.addEventListener(
-  "pointermove",
-  (event) => {
-    if (!cursorLight) return;
-    pendingCursorX = event.clientX;
-    pendingCursorY = event.clientY;
-    if (cursorFrame) return;
-    cursorFrame = window.requestAnimationFrame(() => {
-      cursorFrame = 0;
-      cursorLight.style.transform = `translate3d(${pendingCursorX}px, ${pendingCursorY}px, 0) translate(-50%, -50%)`;
-    });
-  },
-  { passive: true },
-);
+const STEP_WEIGHTS = {
+  files_uploaded: 8,
+  tu_extracted: 18,
+  plan_analyzed: 34,
+  replacement_map_created: 50,
+  dwg_filled: 88,
+  completed: 100,
+};
 
-liquidTargets.forEach((target) => {
-  let frame = 0;
-  let nextX = 0;
-  let nextY = 0;
-  target.addEventListener(
-    "pointermove",
-    (event) => {
-      const rect = target.getBoundingClientRect();
-      nextX = event.clientX - rect.left;
-      nextY = event.clientY - rect.top;
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        target.style.setProperty("--mx", `${nextX}px`);
-        target.style.setProperty("--my", `${nextY}px`);
-      });
-    },
-    { passive: true },
-  );
-});
+// cursor-light и scroll-idle отключены: давали постоянный rAF и дрожь UI.
+
+// pointer-glow на liquid-control отключён (rAF на каждом движении мыши).
 
 tuFile.addEventListener("change", () => updateFileName(tuFile, tuName));
 planFile.addEventListener("change", () => updateFileName(planFile, planName));
@@ -664,6 +880,14 @@ themeToggle.addEventListener("click", () => {
   applyTheme(true);
 });
 
+settingsTrigger?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const willOpen = !settingsMenu?.classList.contains("is-open");
+  setWireMenuOpen(false);
+  setLanguageMenuOpen(false);
+  setSettingsMenuOpen(willOpen);
+});
+
 languageTrigger.addEventListener("click", (event) => {
   event.stopPropagation();
   const willOpen = !languagePicker.classList.contains("is-open");
@@ -687,6 +911,10 @@ languageOptions.forEach((option) => {
 });
 
 document.addEventListener("click", (event) => {
+  if (settingsMenu && !settingsMenu.contains(event.target)) {
+    setSettingsMenuOpen(false);
+    setLanguageMenuOpen(false);
+  }
   if (!languagePicker.contains(event.target)) {
     setLanguageMenuOpen(false);
   }
@@ -697,6 +925,7 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    setSettingsMenuOpen(false);
     setLanguageMenuOpen(false);
     setWireMenuOpen(false);
     setCheckPanelOpen(false);
@@ -763,6 +992,11 @@ form.addEventListener("submit", async (event) => {
       noteUrl: "",
       noteReady: false,
       error: "",
+      steps: { files_uploaded: true },
+      progress: 10,
+      stageLabel: t("stepFiles"),
+      message: "",
+      aiEngineer: null,
     };
     upsertProjectRun(runEntry);
     selectProjectRun(runEntry.id);
@@ -822,8 +1056,20 @@ async function runProjectProcessing({
   }
 
   activeJobsCount += 1;
-  resetStatus();
-  startProgressTimeline();
+  if (activeJobsCount <= 1) {
+    resetStatus();
+  }
+  setLiveStatusVisible(true);
+  if (runEntry.id === selectedRunId || activeJobsCount <= 1) {
+    applySteps(runEntry.steps || { files_uploaded: true }, { active: true });
+    setOverallProgress(Math.max(Number(runEntry.progress) || 0, 8), { allowDecrease: true });
+    if (runEntry.stageLabel) {
+      runState.textContent = runEntry.stageLabel;
+    }
+  }
+  if (!progressTimer) {
+    startProgressTimeline();
+  }
   showNotice(t("processingStarted"), "success");
 
   let sessionId = runId || runEntry.id;
@@ -860,7 +1106,6 @@ async function runProjectProcessing({
 
     if (activeJobsCount <= 1) {
       stopProgressTimeline();
-      applySteps(payload.steps);
     }
 
     const unresolved = payload.cad?.unresolved_placeholders || [];
@@ -879,6 +1124,12 @@ async function runProjectProcessing({
     runEntry.error = noteReady
       ? ""
       : payload.message || payload.detail || `${t("unresolved")} ${(unresolved || []).join(", ")}. ${t("checkLog")}`;
+    syncRunEntryProgress(runEntry, payload);
+    if (noteReady) {
+      runEntry.progress = 100;
+      runEntry.stageLabel = t("projectStageReady");
+      runEntry.aiEngineer = payload.ai_engineer || null;
+    }
     upsertProjectRun(runEntry);
     selectProjectRun(sessionId);
 
@@ -894,9 +1145,15 @@ async function runProjectProcessing({
     const unresolvedNote = unresolved.length
       ? ` ${t("unresolved")} ${unresolved.join(", ")}.`
       : "";
+    await presentAiEngineerForRun(sessionId, runEntry, payload.ai_engineer || null, {
+      switchTab: true,
+      refresh: false,
+      scroll: false,
+    });
+    const aiWarnText = formatAiEngineerNotice(runEntry.aiEngineer);
     showNotice(
-      `${successMessage}${unresolvedNote}${formatWireSuccessNotice(payload)}${warningText}`,
-      "success",
+      `${successMessage}${unresolvedNote}${formatWireSuccessNotice(payload)}${warningText}${aiWarnText}`,
+      aiWarnText ? "error" : "success",
     );
   } catch (error) {
     // Если соединение оборвалось, но сервер уже доделал записку — восстанавливаем статус.
@@ -914,16 +1171,25 @@ async function runProjectProcessing({
           runEntry.noteReady = true;
           runEntry.status = "ready";
           runEntry.error = "";
+          syncRunEntryProgress(runEntry, recovered);
+          runEntry.aiEngineer = recovered.ai_engineer || runEntry.aiEngineer || null;
+          runEntry.progress = 100;
+          runEntry.stageLabel = t("projectStageReady");
           upsertProjectRun(runEntry);
           selectProjectRun(sessionId);
           if (activeJobsCount <= 1) {
             stopProgressTimeline();
-            applySteps(recovered.steps);
           }
           runState.textContent = t("ready");
+          await presentAiEngineerForRun(sessionId, runEntry, runEntry.aiEngineer, {
+            switchTab: true,
+            refresh: false,
+            scroll: false,
+          });
+          const aiWarnText = formatAiEngineerNotice(runEntry.aiEngineer);
           showNotice(
-            recovered.project_type === "10kv" ? t("success10kv") : t("success"),
-            "success",
+            `${recovered.project_type === "10kv" ? t("success10kv") : t("success")}${aiWarnText}`,
+            aiWarnText ? "error" : "success",
           );
           return;
         }
@@ -977,10 +1243,15 @@ async function pollRunStatus(runId, runEntry) {
     runEntry.projectType = payload.project_type || runEntry.projectType;
     runEntry.noteUrl = payload.note_download_url || `/api/download/${runId}/note`;
     runEntry.status = "running";
+    syncRunEntryProgress(runEntry, payload);
     upsertProjectRun(runEntry);
 
-    if (activeJobsCount <= 1 && payload.steps) {
-      applySteps(payload.steps);
+    if (runEntry.id === selectedRunId || activeJobsCount <= 1) {
+      applySteps(runEntry.steps, { active: true });
+      setOverallProgress(runEntry.progress);
+      if (runEntry.stageLabel) {
+        runState.textContent = runEntry.stageLabel;
+      }
     }
     if (payload.message) {
       showNotice(payload.message, "success");
@@ -1049,9 +1320,428 @@ function selectProjectRun(runId) {
   const entry = projectRuns.find((item) => item.id === runId);
   if (!entry) return;
   selectedRunId = runId;
+  if (aiEngineerChatLog && aiChatRunId !== runId) {
+    aiEngineerChatLog.dataset.loaded = "0";
+  }
   lastNoteDownloadUrl = entry.noteUrl || `/api/download/${runId}/note`;
   setDownloads(Boolean(entry.noteReady));
+  if (entry.steps) {
+    applySteps(entry.steps, {
+      active: entry.status === "running",
+      forceComplete: entry.status === "ready",
+    });
+    setOverallProgress(entry.progress || computeProgress(entry.steps, entry.status), {
+      allowDecrease: true,
+    });
+  }
+  if (entry.status === "running" && entry.stageLabel) {
+    runState.textContent = entry.stageLabel;
+  } else if (entry.status === "ready") {
+    runState.textContent = t("ready");
+  } else if (entry.status === "error") {
+    runState.textContent = t("error");
+  }
+  if (entry.aiEngineer) {
+    renderAiEngineerReport(entry.aiEngineer);
+  } else if (entry.status === "ready") {
+    void fetchAiEngineerReport(runId, entry);
+  } else {
+    renderAiEngineerReport(null);
+  }
   renderProjectRuns();
+}
+
+function setWorkspaceTab(tabName) {
+  const tab = tabName === "ai" ? "ai" : "project";
+  document.body.classList.toggle("is-ai-tab", tab === "ai");
+  if (workspaceRoot) {
+    workspaceRoot.dataset.activeTab = tab;
+  }
+  workspaceTabs.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.workspaceTab === tab);
+  });
+  if (aiEngineerPanel) {
+    aiEngineerPanel.hidden = tab !== "ai";
+  }
+  // Только показать уже готовый отчёт. Без refresh и без повторного setWorkspaceTab —
+  // иначе возникает цикл перерисовок и страница «дёргается».
+  if (tab === "ai" && selectedRunId) {
+    const entry = projectRuns.find((item) => item.id === selectedRunId);
+    if (entry?.aiEngineer) {
+      renderAiEngineerReport(entry.aiEngineer);
+    } else if (entry?.status === "ready") {
+      void presentAiEngineerForRun(selectedRunId, entry, null, {
+        switchTab: false,
+        refresh: false,
+        scroll: false,
+      });
+    } else {
+      renderAiEngineerReport(null);
+    }
+  }
+}
+
+function renderAiEngineerReport(report) {
+  const hasReport = Boolean(report && typeof report === "object");
+  workspaceTabs.forEach((button) => {
+    if (button.dataset.workspaceTab === "ai") {
+      button.classList.toggle("has-report", hasReport);
+    }
+  });
+  if (aiEngineerIdle) aiEngineerIdle.hidden = hasReport;
+  if (aiEngineerReport) aiEngineerReport.hidden = !hasReport;
+  aiChatHasProject = Boolean(hasReport && selectedRunId);
+  if (!hasReport) {
+    if (aiEngineerModeBadge) aiEngineerModeBadge.hidden = true;
+    if (aiEngineerPlacement) {
+      aiEngineerPlacement.hidden = true;
+      aiEngineerPlacement.textContent = "";
+    }
+    syncAiChatState();
+    void loadAiEngineerChat("");
+    return;
+  }
+
+  const score = Number(report.score);
+  if (aiEngineerScore) {
+    aiEngineerScore.textContent = Number.isFinite(score) ? `${score.toFixed(1)}%` : "—";
+  }
+  if (aiEngineerSummary) {
+    const status = String(report.status || "ok");
+    aiEngineerSummary.className = `ai-engineer__summary is-${status}`;
+    if (status === "ok") {
+      aiEngineerSummary.textContent = t("aiEngineerCriticalNone");
+    } else {
+      aiEngineerSummary.textContent = report.summary || t("aiEngineerFindingsTitle");
+    }
+  }
+  if (aiEngineerModeBadge) {
+    const mode = String(report.mode || "rules");
+    aiEngineerModeBadge.hidden = false;
+    aiEngineerModeBadge.textContent =
+      mode === "rules+llm" ? t("aiEngineerModeLlm") : t("aiEngineerModeRules");
+  }
+  if (aiEngineerChecked) {
+    const items = Array.isArray(report.checked) ? report.checked : [];
+    aiEngineerChecked.innerHTML = items
+      .map((item) => {
+        const attention = item.attention ? " is-attention" : "";
+        const mark = item.attention ? "!" : item.ok ? "✔" : "○";
+        return `<li class="${attention}"><span class="mark">${mark}</span><span>${escapeHtml(
+          item.label || item.id || "",
+        )}</span></li>`;
+      })
+      .join("");
+  }
+  if (aiEngineerPlacement) {
+    const notes = Array.isArray(report.placement_notes)
+      ? report.placement_notes.filter(Boolean)
+      : [];
+    aiEngineerPlacement.hidden = !notes.length;
+    aiEngineerPlacement.textContent = notes.join(" ");
+  }
+  const findings = Array.isArray(report.findings) ? report.findings : [];
+  if (aiEngineerFindingsCount) {
+    if (!findings.length) {
+      aiEngineerFindingsCount.textContent = t("aiEngineerNoFindings");
+    } else if (report.summary) {
+      aiEngineerFindingsCount.textContent = report.summary;
+    } else if (findings.length === 1) {
+      aiEngineerFindingsCount.textContent = t("aiEngineerOneFinding");
+    } else {
+      aiEngineerFindingsCount.textContent = t("aiEngineerManyFindings").replace(
+        "{count}",
+        String(findings.length),
+      );
+    }
+  }
+  if (aiEngineerFindings) {
+    aiEngineerFindings.innerHTML = findings
+      .map((item, index) => {
+        const severity = String(item.severity || "recommendation");
+        const severityClass =
+          severity === "critical" ? "is-critical" : severity === "warning" ? "is-warning" : "";
+        const why = String(item.why || item.detail || item.reason || "").trim();
+        const how = String(item.how || "").trim();
+        return `
+          <article class="ai-engineer__finding ${severityClass}" data-finding-index="${index}">
+            <p class="ai-engineer__finding-title">${escapeHtml(item.title || "")}</p>
+            <p class="ai-engineer__finding-reason">${escapeHtml(item.reason || "")}</p>
+            <p class="ai-engineer__finding-detail is-why">${escapeHtml(why)}</p>
+            <p class="ai-engineer__finding-detail is-how">${escapeHtml(how || why)}</p>
+            <div class="ai-engineer__finding-actions">
+              <button type="button" class="ai-engineer__finding-action" data-finding-action="why">
+                ${escapeHtml(item.action || t("aiEngineerViewAction"))}
+              </button>
+              <button type="button" class="ai-engineer__finding-action" data-finding-action="how">
+                ${escapeHtml(item.fix_action || t("aiEngineerFixAction"))}
+              </button>
+            </div>
+          </article>
+        `;
+      })
+      .join("");
+  }
+  if (aiEngineerDisclaimer && report.disclaimer) {
+    aiEngineerDisclaimer.textContent = report.disclaimer;
+  }
+  syncAiChatState();
+  if (hasReport && selectedRunId) {
+    void loadAiEngineerChat(selectedRunId);
+  } else {
+    void loadAiEngineerChat("");
+  }
+}
+
+function syncAiChatState() {
+  if (aiEngineerChat) {
+    aiEngineerChat.classList.remove("is-locked");
+    aiEngineerChat.classList.toggle("has-project", aiChatHasProject);
+  }
+  if (aiEngineerChatInput) aiEngineerChatInput.disabled = false;
+  if (aiEngineerChatSend) aiEngineerChatSend.disabled = aiChatBusy;
+  document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
+    button.disabled = aiChatBusy;
+  });
+}
+
+function renderAiEngineerChat(messages) {
+  if (!aiEngineerChatLog) return;
+  const items = Array.isArray(messages) ? messages : [];
+  if (!items.length) {
+    const you = escapeHtml(t("aiEngineerChatYou").slice(0, 1));
+    aiEngineerChatLog.innerHTML = `
+      <div class="ai-chat__preview" aria-hidden="true">
+        <article class="ai-chat__bubble is-user is-ghost">
+          <span class="ai-chat__avatar ai-chat__avatar--mini is-user">${you}</span>
+          <div><span>${escapeHtml(t("aiEngineerChatYou"))}</span><p>${escapeHtml(t("aiEngineerChatGhostUser"))}</p></div>
+        </article>
+        <article class="ai-chat__bubble is-bot is-ghost">
+          <span class="ai-chat__avatar ai-chat__avatar--mini"><img src="/static/icons/luna.jpg" alt=""></span>
+          <div><span>${escapeHtml(t("aiEngineerChatBot"))}</span><p>${escapeHtml(t("aiEngineerChatGhostBot"))}</p></div>
+        </article>
+      </div>
+      <div class="ai-chat__empty">
+        <p>${escapeHtml(t("aiEngineerChatEmpty"))}</p>
+      </div>`;
+    return;
+  }
+  aiEngineerChatLog.innerHTML = items
+    .map((item) => {
+      const role = item.role === "user" ? "user" : "bot";
+      const label = role === "user" ? t("aiEngineerChatYou") : t("aiEngineerChatBot");
+      const avatar =
+        role === "bot"
+          ? `<span class="ai-chat__avatar ai-chat__avatar--mini"><img src="/static/icons/luna.jpg" alt=""></span>`
+          : `<span class="ai-chat__avatar ai-chat__avatar--mini is-user">${escapeHtml(
+              t("aiEngineerChatYou").slice(0, 1),
+            )}</span>`;
+      return `<article class="ai-chat__bubble is-${role}">${avatar}<div><span>${escapeHtml(
+        label,
+      )}</span><p>${escapeHtml(item.content || "")}</p></div></article>`;
+    })
+    .join("");
+  aiEngineerChatLog.scrollTop = aiEngineerChatLog.scrollHeight;
+}
+
+function setAiChatTyping(isTyping) {
+  if (aiEngineerChat) aiEngineerChat.classList.toggle("is-typing", Boolean(isTyping));
+  if (aiEngineerChatTyping) aiEngineerChatTyping.hidden = !isTyping;
+}
+
+async function loadAiEngineerChat(runId) {
+  if (!aiEngineerChatLog) return;
+  const scope = runId || "__general__";
+  if (aiChatRunId === scope && aiEngineerChatLog.dataset.loaded === "1") return;
+  aiChatRunId = scope;
+  aiEngineerChatLog.dataset.loaded = "0";
+  const url = runId
+    ? `/api/ai-engineer/${encodeURIComponent(runId)}/chat`
+    : "/api/ai-engineer/chat";
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      renderAiEngineerChat([]);
+      if (aiEngineerChatStatus) aiEngineerChatStatus.textContent = "";
+      return;
+    }
+    const payload = await response.json();
+    renderAiEngineerChat(payload.messages || []);
+    aiEngineerChatLog.dataset.loaded = "1";
+    if (aiEngineerChatStatus && payload.configured === false) {
+      aiEngineerChatStatus.textContent = "";
+    }
+  } catch {
+    renderAiEngineerChat([]);
+  }
+}
+
+async function sendAiEngineerChat(message) {
+  const text = String(message || "").trim();
+  if (!text || aiChatBusy) return;
+  const useProject = Boolean(aiChatHasProject && selectedRunId);
+  const url = useProject
+    ? `/api/ai-engineer/${encodeURIComponent(selectedRunId)}/chat`
+    : "/api/ai-engineer/chat";
+  aiChatBusy = true;
+  if (aiEngineerChatSend) aiEngineerChatSend.disabled = true;
+  document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
+    button.disabled = true;
+  });
+  setAiChatTyping(true);
+  if (aiEngineerChatStatus) aiEngineerChatStatus.textContent = t("aiEngineerChatWait");
+  const current = [];
+  if (aiEngineerChatLog) {
+    const existing = [...aiEngineerChatLog.querySelectorAll(".ai-chat__bubble:not(.is-ghost)")].map((node) => ({
+      role: node.classList.contains("is-user") ? "user" : "assistant",
+      content: node.querySelector("p")?.textContent || "",
+    }));
+    current.push(...existing.filter((item) => item.content));
+  }
+  current.push({ role: "user", content: text });
+  renderAiEngineerChat(current);
+  try {
+    let response;
+    let lastError;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    if (!response) throw lastError || new Error(t("aiEngineerChatError"));
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = payload.detail;
+      const detailText = typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((item) => item.msg || item).join(" ")
+          : t("aiEngineerChatError");
+      throw new Error(detailText);
+    }
+    renderAiEngineerChat(payload.messages || current.concat([{ role: "assistant", content: payload.reply || "" }]));
+    if (aiEngineerChatLog) aiEngineerChatLog.dataset.loaded = "1";
+    aiChatRunId = useProject ? selectedRunId : "__general__";
+    if (aiEngineerChatStatus) aiEngineerChatStatus.textContent = "";
+    if (aiEngineerChatInput) aiEngineerChatInput.value = "";
+  } catch (error) {
+    if (aiEngineerChatStatus) {
+      const raw = String(error && error.message ? error.message : "");
+      const network = /load failed|failed to fetch|networkerror|abort|timeout|отмен/i.test(raw);
+      aiEngineerChatStatus.textContent = network || !raw ? t("aiEngineerChatError") : raw;
+    }
+  } finally {
+    aiChatBusy = false;
+    setAiChatTyping(false);
+    syncAiChatState();
+  }
+}
+
+function formatAiEngineerNotice(report) {
+  if (!report || typeof report !== "object") return "";
+  const findings = Array.isArray(report.findings) ? report.findings : [];
+  const geometry = findings.filter((item) => {
+    const id = String(item?.id || "");
+    return id.startsWith("support_off_route") || id.startsWith("grounding_off_route");
+  });
+  if (!geometry.length && report.status !== "warnings" && report.status !== "critical") {
+    return "";
+  }
+  const summary = String(report.summary || "").trim();
+  if (geometry.length) {
+    const titles = geometry
+      .slice(0, 4)
+      .map((item) => String(item.title || "").trim())
+      .filter(Boolean);
+    const head = summary || t("aiEngineerGeometryAlert");
+    return ` ${head}${titles.length ? ` (${titles.join("; ")})` : ""}`;
+  }
+  return summary ? ` ${summary}` : "";
+}
+
+async function presentAiEngineerForRun(
+  runId,
+  entry,
+  fallbackReport = null,
+  options = {},
+) {
+  if (!runId) return null;
+  const switchTab = options.switchTab === true;
+  const refresh = options.refresh === true;
+  const scroll = options.scroll === true;
+  let report = fallbackReport;
+
+  if (report && Array.isArray(report.findings) && !refresh) {
+    if (entry) entry.aiEngineer = report;
+    renderAiEngineerReport(report);
+    if (switchTab) {
+      document.body.classList.add("is-ai-tab");
+      if (workspaceRoot) workspaceRoot.dataset.activeTab = "ai";
+      workspaceTabs.forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.workspaceTab === "ai");
+      });
+      if (aiEngineerPanel) aiEngineerPanel.hidden = false;
+    }
+    return report;
+  }
+
+  const fetchSeq = ++aiReportFetchSeq;
+  try {
+    const qs = refresh ? "?refresh=1" : "";
+    const response = await fetch(`/api/ai-engineer/${encodeURIComponent(runId)}${qs}`);
+    if (response.ok) {
+      report = await response.json();
+    }
+  } catch {
+    // оставляем fallback
+  }
+  if (fetchSeq !== aiReportFetchSeq) {
+    return entry?.aiEngineer || report || null;
+  }
+  if (!report) return null;
+  if (entry) {
+    entry.aiEngineer = report;
+    renderProjectRuns();
+  }
+  renderAiEngineerReport(report);
+  if (switchTab) {
+    document.body.classList.add("is-ai-tab");
+    if (workspaceRoot) workspaceRoot.dataset.activeTab = "ai";
+    workspaceTabs.forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.workspaceTab === "ai");
+    });
+    if (aiEngineerPanel) aiEngineerPanel.hidden = false;
+  }
+  if (scroll && aiEngineerFindings) {
+    aiEngineerFindings.scrollIntoView({ behavior: "auto", block: "nearest" });
+  }
+  return report;
+}
+
+async function fetchAiEngineerReport(runId, entry) {
+  if (!runId) return;
+  if (entry?.aiEngineer && Array.isArray(entry.aiEngineer.findings)) {
+    renderAiEngineerReport(entry.aiEngineer);
+    return;
+  }
+  try {
+    await presentAiEngineerForRun(runId, entry, entry?.aiEngineer || null, {
+      switchTab: false,
+      refresh: false,
+      scroll: false,
+    });
+  } catch {
+    // отчёт необязателен для скачивания записки
+  }
 }
 
 function ensureProjectsListDelegation() {
@@ -1075,6 +1765,7 @@ function renderProjectRuns() {
   if (!projectsList || !projectsCount) return;
   ensureProjectsListDelegation();
   projectsCount.textContent = String(projectRuns.length);
+  updateSidePanelVisibility();
   if (!projectRuns.length) {
     projectsList.innerHTML = "";
     return;
@@ -1083,23 +1774,45 @@ function renderProjectRuns() {
   projectsList.innerHTML = projectRuns
     .map((entry) => {
       const typeLabel =
-        entry.projectType === "10kv" ? t("projectType10") : t("projectType04");
-      const statusLabel =
-        entry.status === "ready"
-          ? t("projectReady")
-          : entry.status === "error"
-            ? t("projectFailed")
-            : t("projectRunning");
-      const meta =
+        entry.projectType === "10kv" ? t("projectType10") : entry.projectType === "0.4kv" ? t("projectType04") : "";
+      const progress = Math.max(0, Math.min(100, Number(entry.progress) || 0));
+      const stage = getProjectStageView(entry);
+      const title = t("projectCardTitle").replace("{code}", shortProjectCode(entry.projectNumber));
+      const errorHtml =
         entry.status === "error" && entry.error
-          ? entry.error
-          : `${typeLabel} · ${statusLabel}`;
+          ? `<div class="project-run__meta">${escapeHtml(entry.error)}</div>`
+          : "";
+      const aiSummary = String(entry.aiEngineer?.summary || "").trim();
+      const aiHasWarn =
+        entry.aiEngineer &&
+        (entry.aiEngineer.status === "warnings" || entry.aiEngineer.status === "critical");
+      const aiHtml = aiHasWarn
+        ? `<div class="project-run__ai-alert">${escapeHtml(
+            aiSummary || t("aiEngineerCardAlert"),
+          )}</div>`
+        : "";
       return `
         <article class="project-run ${entry.id === selectedRunId ? "is-selected" : ""} ${
           entry.status === "running" ? "is-running" : ""
-        } ${entry.status === "error" ? "is-error" : ""}" data-run-id="${entry.id}">
-          <div class="project-run__title">${escapeHtml(entry.projectNumber)}</div>
-          <div class="project-run__meta">${escapeHtml(meta)}</div>
+        } ${entry.status === "ready" ? "is-ready" : ""} ${
+          entry.status === "error" ? "is-error" : ""
+        } ${aiHasWarn ? "has-ai-warn" : ""}" data-run-id="${entry.id}">
+          <div class="project-run__header">
+            <div class="project-run__title">${escapeHtml(title)}</div>
+            ${typeLabel ? `<span class="project-run__badge">${escapeHtml(typeLabel)}</span>` : ""}
+          </div>
+          <div class="project-run__stage">
+            <span class="project-run__stage-mark">${stage.mark}</span>
+            <span>${escapeHtml(stage.label)}</span>
+          </div>
+          ${aiHtml}
+          <div class="project-run__progress" aria-hidden="true">
+            <div class="project-run__progress-track">
+              <div class="project-run__progress-bar" style="width:${progress}%"></div>
+            </div>
+            <span class="project-run__progress-value">${progress}%</span>
+          </div>
+          ${errorHtml}
           <div class="project-run__actions">
             <button type="button" data-action="note" ${entry.noteReady ? "" : "disabled"}>
               ${t("projectDownloadNote")}
@@ -1109,6 +1822,98 @@ function renderProjectRuns() {
       `;
     })
     .join("");
+}
+
+function shortProjectCode(projectNumber) {
+  const raw = String(projectNumber || "").trim();
+  if (!raw) return "—";
+  const parts = raw.split("/");
+  return parts[parts.length - 1] || raw;
+}
+
+function getProjectStageView(entry) {
+  if (entry.status === "ready") {
+    return { mark: "✔", label: t("projectStageReady") };
+  }
+  if (entry.status === "error") {
+    return { mark: "!", label: entry.error || t("projectStageFailed") };
+  }
+  const active = getActiveStepKey(entry.steps || {});
+  const label = active
+    ? formatActiveStepLabel(active)
+    : entry.stageLabel || t("projectStageRunning");
+  return { mark: "⏳", label };
+}
+
+function syncRunEntryProgress(entry, payload = {}) {
+  const steps = { ...(entry.steps || {}) };
+  Object.entries(payload.steps || {}).forEach(([key, value]) => {
+    if (value) {
+      steps[key] = true;
+    }
+  });
+  if (payload.status === "completed" || payload.status === "completed_with_warnings") {
+    statusTimeline.forEach(({ step }) => {
+      steps[step] = true;
+    });
+  }
+  entry.steps = steps;
+  entry.message = payload.message || entry.message || "";
+  const incoming =
+    payload.progress != null && payload.progress !== ""
+      ? Number(payload.progress)
+      : computeProgress(steps, entry.status === "ready" ? "ready" : payload.status);
+  const floor = Number.isFinite(incoming) ? incoming : 0;
+  entry.progress = Math.max(Number(entry.progress) || 0, floor);
+  const active = getActiveStepKey(steps);
+  entry.stageLabel = active ? formatActiveStepLabel(active) : entry.message || t("projectStageRunning");
+  if (payload.status === "completed" || payload.status === "completed_with_warnings") {
+    entry.stageLabel = t("projectStageReady");
+    entry.progress = 100;
+  }
+  if (payload.ai_engineer) {
+    entry.aiEngineer = payload.ai_engineer;
+  }
+  if (payload.status === "failed") {
+    entry.stageLabel = payload.message || t("projectStageFailed");
+  }
+}
+
+function computeProgress(steps = {}, status = "running") {
+  if (status === "ready" || status === "completed" || status === "completed_with_warnings") {
+    return 100;
+  }
+  let best = 0;
+  statusTimeline.forEach(({ step }) => {
+    if (steps?.[step]) {
+      best = Math.max(best, STEP_WEIGHTS[step] || 0);
+    }
+  });
+  if (status === "failed") {
+    return Math.max(0, Math.min(99, best));
+  }
+  return Math.max(0, Math.min(99, best));
+}
+
+function progressCapForSteps(steps = {}) {
+  const active = getActiveStepKey(steps);
+  const target = STEP_WEIGHTS[active];
+  if (target == null) return 99;
+  return Math.max(0, Math.min(99, target - 1));
+}
+
+function getActiveStepKey(steps = {}) {
+  for (const { step } of statusTimeline) {
+    if (!steps?.[step]) return step;
+  }
+  return "completed";
+}
+
+function formatActiveStepLabel(step) {
+  const item = statusTimeline.find((node) => node.step === step);
+  const label = t(item?.labelKey || "projectStageRunning");
+  if (step === "completed") return label;
+  return label.endsWith("...") || label.endsWith("…") ? label : `${label}...`;
 }
 
 function downloadProjectNote(runId) {
@@ -1332,17 +2137,142 @@ checkForm?.addEventListener("submit", async (event) => {
   }
 });
 
+workspaceTabs.forEach((button) => {
+  button.addEventListener("click", () => {
+    setWorkspaceTab(button.dataset.workspaceTab || "project");
+  });
+});
+if (openAiEngineerTab) {
+  openAiEngineerTab.addEventListener("click", () => setWorkspaceTab("ai"));
+}
+if (aiEngineerFindings) {
+  aiEngineerFindings.addEventListener("click", (event) => {
+    const action = event.target?.closest?.("[data-finding-action]");
+    if (!action) return;
+    const card = action.closest(".ai-engineer__finding");
+    if (!card) return;
+    const kind = action.dataset.findingAction;
+    if (kind === "why" || kind === "view") {
+      const willOpen = !card.classList.contains("is-why-open");
+      card.classList.toggle("is-why-open", willOpen);
+      action.textContent = willOpen ? t("aiEngineerHideAction") : t("aiEngineerViewAction");
+      return;
+    }
+    if (kind === "how") {
+      const willOpen = !card.classList.contains("is-how-open");
+      card.classList.toggle("is-how-open", willOpen);
+      action.textContent = willOpen ? t("aiEngineerHideFixAction") : t("aiEngineerFixAction");
+    }
+  });
+}
+if (aiEngineerChatForm) {
+  aiEngineerChatForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void sendAiEngineerChat(aiEngineerChatInput?.value || "");
+  });
+}
+document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
+  button.addEventListener("click", () => {
+    void sendAiEngineerChat(button.dataset.chatPrompt || button.textContent || "");
+  });
+});
+
 applyTheme(false);
 updateLanguagePickerUI();
 updateWirePickerUI();
 applyLanguage(false);
 updateWireHint();
 resetStatus();
+updateSidePanelVisibility();
+setWorkspaceTab("project");
+renderAiEngineerReport(null);
 
 function setLanguageMenuOpen(isOpen) {
   languagePicker.classList.toggle("is-open", isOpen);
   languageTrigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
   languageMenu.hidden = !isOpen;
+}
+
+function setSettingsMenuOpen(isOpen) {
+  if (!settingsMenu || !settingsTrigger || !settingsPanel) return;
+  settingsMenu.classList.toggle("is-open", isOpen);
+  settingsTrigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  settingsPanel.hidden = !isOpen;
+  if (!isOpen) {
+    setLanguageMenuOpen(false);
+  }
+}
+
+function setLiveStatusVisible(visible) {
+  if (liveStatusPanel) {
+    liveStatusPanel.hidden = !visible;
+  }
+  if (visible) {
+    updateBenefitCards({ activeStep: "files_uploaded" });
+  }
+  updateSidePanelVisibility();
+}
+
+function updateBenefitCards({ steps = null, activeStep = "", forceComplete = false, idle = false } = {}) {
+  if (!benefitCards.length) return;
+
+  if (idle) {
+    benefitCards.forEach((card) => {
+      card.classList.remove("is-active", "is-done", "is-pending");
+    });
+    return;
+  }
+
+  if (forceComplete) {
+    benefitCards.forEach((card) => {
+      card.classList.remove("is-active", "is-pending");
+      card.classList.add("is-done");
+    });
+    return;
+  }
+
+  const step = activeStep || (steps ? getActiveStepKey(steps) : "files_uploaded");
+  const stageOrder = ["detect", "analyze", "deliver"];
+  const stepToStage = {
+    files_uploaded: "detect",
+    tu_extracted: "detect",
+    plan_analyzed: "analyze",
+    replacement_map_created: "deliver",
+    dwg_filled: "deliver",
+    completed: "deliver",
+  };
+
+  if (step === "completed") {
+    benefitCards.forEach((card) => {
+      card.classList.remove("is-active", "is-pending");
+      card.classList.add("is-done");
+    });
+    return;
+  }
+
+  const activeStage = stepToStage[step] || "detect";
+  const activeIdx = stageOrder.indexOf(activeStage);
+
+  benefitCards.forEach((card) => {
+    const idx = stageOrder.indexOf(card.dataset.stage);
+    const isDone = idx >= 0 && idx < activeIdx;
+    const isActive = idx === activeIdx;
+    card.classList.toggle("is-done", isDone);
+    card.classList.toggle("is-active", isActive);
+    card.classList.toggle("is-pending", !isDone && !isActive);
+  });
+}
+
+function updateSidePanelVisibility() {
+  const hasRuns = projectRuns.length > 0;
+  const liveVisible = Boolean(liveStatusPanel && !liveStatusPanel.hidden);
+  if (projectsPanel) {
+    projectsPanel.hidden = !hasRuns;
+    projectsPanel.classList.toggle("is-after-live", liveVisible && hasRuns);
+  }
+  if (statusIdleHint) {
+    statusIdleHint.hidden = liveVisible || hasRuns;
+  }
 }
 
 function updateLanguagePickerUI() {
@@ -1376,8 +2306,8 @@ function applyLanguage(animated = false) {
     document.querySelectorAll("[data-i18n-label]").forEach((node) => {
       node.dataset.label = t(node.dataset.i18nLabel);
     });
-    document.querySelectorAll("[data-i18n-aria]").forEach((node) => {
-      node.setAttribute("aria-label", t(node.dataset.i18nAria));
+    document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
+      node.setAttribute("placeholder", t(node.dataset.i18nPlaceholder));
     });
 
     if (visibleText) {
@@ -1389,10 +2319,12 @@ function applyLanguage(animated = false) {
       updateWirePickerUI();
       updateWireHint();
       renderProjectRuns();
+      updateStatusMarks();
       if (!progressTimer) {
         runState.textContent = t("idle");
       } else {
-        advanceProgress();
+        const entry = projectRuns.find((item) => item.id === selectedRunId);
+        runState.textContent = entry?.stageLabel || t("processingStarted");
       }
     }
   };
@@ -1479,7 +2411,11 @@ function collectLanguageTargets() {
       key = currentTheme === "dark" ? "themeLight" : "themeDark";
     }
     if (node === runState && progressTimer) {
-      key = statusTimeline[Math.min(progressIndex, statusTimeline.length - 1)]?.stateKey || "idle";
+      const entry = projectRuns.find((item) => item.id === selectedRunId);
+      if (entry?.stageLabel) {
+        return { node, text: entry.stageLabel };
+      }
+      key = "processingStarted";
     }
     return { node, text: t(key) };
   });
@@ -1537,37 +2473,115 @@ function setStep(step, done) {
   if (!item) return;
   item.classList.toggle("is-done", done);
   if (done) {
-    item.classList.remove("is-active");
+    item.classList.remove("is-active", "is-pending");
   }
+  updateStatusMarks();
 }
 
 function setActiveStep(step) {
-  statusItems.forEach((item) => item.classList.remove("is-active"));
-  const item = statusItems.find((node) => node.dataset.step === step);
-  if (!item || item.classList.contains("is-done")) return;
-  item.classList.add("is-active");
+  statusItems.forEach((item) => {
+    const isActive = item.dataset.step === step && !item.classList.contains("is-done");
+    item.classList.toggle("is-active", isActive);
+    item.classList.toggle(
+      "is-pending",
+      !item.classList.contains("is-done") && !isActive,
+    );
+  });
+  updateStatusMarks();
+  updateBenefitCards({ activeStep: step });
 }
 
-function applySteps(steps = {}) {
-  statusTimeline.forEach(({ step }) => setStep(step, steps?.[step] === true));
+function updateStatusMarks() {
+  statusItems.forEach((item) => {
+    const mark = item.querySelector(".status-mark");
+    const label = item.querySelector(".status-label");
+    if (!mark) return;
+    if (item.classList.contains("is-done")) {
+      mark.textContent = "✔";
+      if (label && label.dataset.i18n) {
+        label.textContent = t(label.dataset.i18n);
+      }
+      return;
+    }
+    if (item.classList.contains("is-active")) {
+      mark.textContent = "⏳";
+      if (label && label.dataset.i18n) {
+        const base = t(label.dataset.i18n);
+        label.textContent =
+          item.dataset.step === "completed" || base.endsWith("...") || base.endsWith("…")
+            ? base
+            : `${base}...`;
+      }
+      return;
+    }
+    mark.textContent = "○";
+    if (label && label.dataset.i18n) {
+      label.textContent = t(label.dataset.i18n);
+    }
+  });
+}
+
+function applySteps(steps = {}, options = {}) {
+  const { active = true, forceComplete = false } = options;
+  statusTimeline.forEach(({ step }) => {
+    setStep(step, forceComplete || steps?.[step] === true);
+  });
+  if (forceComplete) {
+    statusItems.forEach((item) => item.classList.remove("is-active", "is-pending"));
+    updateStatusMarks();
+    setOverallProgress(100);
+    updateBenefitCards({ forceComplete: true });
+    return;
+  }
+  if (active) {
+    const current = getActiveStepKey(steps);
+    setActiveStep(current);
+    updateBenefitCards({ steps, activeStep: current });
+  } else {
+    statusItems.forEach((item) => item.classList.remove("is-active"));
+    updateStatusMarks();
+    updateBenefitCards({ steps, activeStep: getActiveStepKey(steps) });
+  }
+}
+
+function setOverallProgress(percent, options = {}) {
+  const allowDecrease = Boolean(options.allowDecrease);
+  let value = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  if (!allowDecrease) {
+    value = Math.max(displayedOverallProgress, value);
+  }
+  displayedOverallProgress = value;
+  if (statusProgressBar) {
+    statusProgressBar.style.width = `${value}%`;
+  }
+  if (statusProgressValue) {
+    statusProgressValue.textContent = `${value}%`;
+  }
 }
 
 function startProgressTimeline() {
   stopProgressTimeline();
-  progressIndex = 0;
-  advanceProgress();
   progressTimer = window.setInterval(() => {
-    if (progressIndex >= statusTimeline.length - 1) return;
-    progressIndex += 1;
-    advanceProgress();
-  }, 1900);
+    crawlRunningProgress();
+  }, 1800);
 }
 
-function advanceProgress() {
-  const current = statusTimeline[progressIndex];
-  if (!current) return;
-  runState.textContent = t(current.stateKey);
-  setActiveStep(current.step);
+function crawlRunningProgress() {
+  let changed = false;
+  projectRuns.forEach((entry) => {
+    if (entry.status !== "running") return;
+    const cap = progressCapForSteps(entry.steps || {});
+    const current = Math.max(0, Number(entry.progress) || 0);
+    if (current >= cap) return;
+    entry.progress = current + 1;
+    changed = true;
+    if (entry.id === selectedRunId || activeJobsCount <= 1) {
+      setOverallProgress(entry.progress);
+    }
+  });
+  if (changed) {
+    renderProjectRuns();
+  }
 }
 
 function stopProgressTimeline() {
@@ -1576,12 +2590,17 @@ function stopProgressTimeline() {
     progressTimer = null;
   }
   statusItems.forEach((item) => item.classList.remove("is-active"));
+  updateStatusMarks();
 }
 
 function resetStatus() {
   stopProgressTimeline();
-  statusItems.forEach((item) => item.classList.remove("is-done", "is-active"));
+  displayedOverallProgress = 0;
+  statusItems.forEach((item) => item.classList.remove("is-done", "is-active", "is-pending"));
+  updateStatusMarks();
+  setOverallProgress(0, { allowDecrease: true });
   runState.textContent = t("idle");
+  updateBenefitCards({ idle: true });
 }
 
 function setDownloads(enabled) {

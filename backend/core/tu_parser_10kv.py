@@ -44,6 +44,8 @@ def enrich_tu_data_10kv(tu_path: Any, tu_data: dict[str, Any]) -> tuple[dict[str
         warnings.append("Поле {{MOSH}} не удалось извлечь из ТУ.")
 
     merged = {**tu_data, **extra}
+    if not str(merged.get("6-10") or "").strip():
+        merged["6-10"] = "10/0,4"
     return merged, warnings
 
 
@@ -60,34 +62,67 @@ def _extract_voltage_ratio(text: str) -> str:
 def _search_voltage_ratio(text: str) -> str:
     if not text:
         return ""
-    match = re.search(r"(\d+)\s*/\s*0[,.]\s*4\s*кв", text, flags=re.IGNORECASE)
-    if not match:
-        return ""
-    high = match.group(1)
-    return f"{high}/0,4"
-
-
-def _extract_ps_name(text: str) -> str:
-    item = _numbered_item(text, "10.1.1.1", "10.1.1.2")
-    source = item or text
     match = re.search(
-        r"от\s+опоры\s+вл\s*10\s*кв\s+([А-ЯЁ][а-яё-]+)",
-        source,
+        r"(?:тп\s*)?(\d+)\s*/\s*0\s*[,.]\s*4(?:\s*кв)?",
+        text,
         flags=re.IGNORECASE,
     )
     if match:
-        return f"ПС {_normalize(match.group(1))}"
-
-    patterns = (
-        r"базовая\s+подстанция[^:]*:\s*ПС\s+(?:\d+/\d+\s*кВ\s+)?([А-ЯЁ][а-яё-]+)",
-        r"ПС\s+\d+/\d+\s*кВ\s+([А-ЯЁ][а-яё-]+)",
-        r"ПС\s+([А-ЯЁ][а-яё-]+)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            return f"ПС {_normalize(match.group(1))}"
+        return f"{match.group(1)}/0,4"
     return ""
+
+
+def _extract_ps_name(text: str) -> str:
+    item = _numbered_item(text, "10.1.1.1", "10.1.1.2") or ""
+    for source in (item, text):
+        if not source:
+            continue
+        match = re.search(
+            r"от\s+опоры(?:\s*№\s*[\w/-]+)?\s*(?:к?вл|кл)\s*10\s*кв\s+(.+?)"
+            r"(?=\s+яч|\s+ячейк|\s+[–—-]\s*ТП|\s+до\s+РУ|\s+по\s+п\.|\s+смонтир)",
+            source,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            name = _format_10kv_source_name(match.group(1))
+            if name:
+                return name
+        match = re.search(
+            r"линия электропередачи 6-10\s*кв:\s*(?:к?вл|кл)\s*10\s*кв\s+(.+?)"
+            r"(?=\s+яч|\s+ячейк|\s+[–—-]\s*ТП|,|\n)",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            name = _format_10kv_source_name(match.group(1))
+            if name:
+                return name
+
+    match = re.search(
+        r"\bПС\s+(?:\d+(?:/\d+)+\s*кВ\s+)?([А-ЯЁ][А-ЯЁа-яё-]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _format_10kv_source_name(match.group(1))
+    return ""
+
+
+def _format_10kv_source_name(raw: str) -> str:
+    name = _normalize(raw or "")
+    name = re.sub(r"\s+", " ", name).strip(" .;,")
+    name = re.split(
+        r"\s+яч\.?|\s+ячейк|\s+[–—-]\s*ТП|\s+до\s+РУ|\s+по\s+п\.",
+        name,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip(" .;,")
+    if not name:
+        return ""
+    folded = name.casefold()
+    if folded.startswith("пс ") or re.match(r"^(црп|рп|тп)(\b|[\s-])", folded):
+        return name
+    return f"ПС {name}"
 
 
 def _extract_otkudastroit_10kv(text: str) -> str:
@@ -98,12 +133,12 @@ def _extract_otkudastroit_10kv(text: str) -> str:
     item = _numbered_item(text, "10.1.1.1", "10.1.1.2")
     source = item or text
     if re.search(
-        r"от\s+опоры\s+вл\s*10\s*кв.+?до\s+ру\s*10\s*кв",
+        r"от\s+опоры[^\n]{0,40}?(?:к?вл|кл)\s*10\s*кв.+?до\s+ру\s*10\s*кв",
         source,
         flags=re.IGNORECASE | re.DOTALL,
     ):
         return "от опоры ВЛ 10 кВ до РУ 10 кВ"
-    if re.search(r"от\s+опоры\s+вл\s*10\s*кв", source, flags=re.IGNORECASE):
+    if re.search(r"от\s+опоры[^\n]{0,40}?(?:к?вл|кл)\s*10\s*кв", source, flags=re.IGNORECASE):
         return "от опоры ВЛ 10 кВ до РУ 10 кВ"
     return ""
 
@@ -120,9 +155,20 @@ def _extract_sech_kabel_10kv(text: str) -> str:
 
 def _extract_mosh(text: str) -> str:
     item = _numbered_item(text, "10.1.2", "10.1.3")
-    source = item or text
-    match = re.search(r"мощност\w*\s+(\d+)\s*кв[аa]", source, flags=re.IGNORECASE)
-    if match:
-        return match.group(1)
-    match = re.search(r"(\d+)\s*кв[аa]", source, flags=re.IGNORECASE)
-    return match.group(1) if match else ""
+    sources = [item or "", text]
+    patterns = (
+        r"киосков\w*[^\n]{0,80}?(\d+)\s*кв[аa]",
+        r"трансформатор\w*\s+мощност\w*\s+(\d+)\s*кв[аa]",
+        r"мощност\w*\s+(\d+)\s*кв[аa]",
+        r"тп\s+\d+/0\s*[,.]?\s*4\s*кв[^\n]{0,40}?(\d+)\s*кв[аa]",
+    )
+    for source in sources:
+        if not source:
+            continue
+        if re.search(r"строительство новых подстанций:\s*не требуется", source, flags=re.IGNORECASE):
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, source, flags=re.IGNORECASE)
+            if match:
+                return match.group(1)
+    return ""

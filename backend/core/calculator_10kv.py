@@ -43,8 +43,13 @@ def calculate_materials_10kv(
     line_length_04_m = float(plan_data.get("line_length_04kv_m", 0) or 0)
     km_10_route = float(plan_data.get("line_length_10kv_km", line_length_m / 1000) or 0)
     km_04_route = float(plan_data.get("line_length_04kv_km", line_length_04_m / 1000) or 0)
-    has_transformer_substation = bool(str(tu_data.get("6-10", "") or "").strip())
-    ktp_entry_km = 0.005 if has_transformer_substation else 0.0
+    if km_04_route <= 0:
+        fallback_04_m = float(plan_data.get("line_length_m", 0) or 0)
+        if fallback_04_m >= 8 and abs(fallback_04_m - line_length_m) > 1:
+            line_length_04_m = fallback_04_m
+            km_04_route = fallback_04_m / 1000
+    # Пакет 10 кВ всегда включает ввод в КТП 5 м, даже если {{6-10}} не извлеклось.
+    ktp_entry_km = 0.005
     km_10_total = km_10_route + ktp_entry_km
     km_04_total = km_04_route + ktp_entry_km
     power_10 = _format_km_display(km_10_total)
@@ -80,6 +85,9 @@ def calculate_materials_10kv(
 
     pole_185 = 2 * bez + sr
     pole_125 = sr
+    # Ø12: L=10 м — по 1 шт. на опору без разъединителя; остальные Ø12 — по 1 шт. на опору с РЛК.
+    h12_10 = bez
+    h12_rlk = sr
 
     st12 = 21 * sr + 10 * bez
     st18 = 5 * sr + 5 * (bez * 2)
@@ -89,7 +97,7 @@ def calculate_materials_10kv(
     voltage_ratio = str(tu_data.get("6-10", "") or "")
     protection = _transformer_protection_values(mosh, voltage_ratio)
 
-    pole_1210 = pole_185
+    pole_1210 = h12_10
     val_681 = ua
 
     return {
@@ -99,12 +107,12 @@ def calculate_materials_10kv(
         "OTKUDA_STROIT_10kV": str(
             tu_data.get("OTKUDA_STROIT_10kV", "")
             or tu_data.get("OTKUDASTROIT_10kV", "")
-            or ""
+            or "от опоры ВЛ 10 кВ до РУ 10 кВ"
         ),
         "OTKUDASTROIT_10kV": str(
             tu_data.get("OTKUDASTROIT_10kV", "")
             or tu_data.get("OTKUDA_STROIT_10kV", "")
-            or ""
+            or "от опоры ВЛ 10 кВ до РУ 10 кВ"
         ),
         "MOSH": mosh,
         "SECH_KABEL_10kV": sech_10,
@@ -118,6 +126,7 @@ def calculate_materials_10kv(
         "KG_04": _format_decimal(km_04_with_reserve * cable_04_weight, 1),
         "POWER_LENGT_M": power_lengt_m,
         "SQUARE_10kV": int(round(line_length_m * 11)) if line_length_m > 0 else "",
+        "SQUARE_10": int(round(line_length_m * 11)) if line_length_m > 0 else "",
         "P20": p20,
         "P": p20,
         "A20": a20,
@@ -151,7 +160,12 @@ def calculate_materials_10kv(
         "YOPK": yopk_value(branch_pole_type),
         "IZM": total_10kv,
         "P201": _format_decimal(p20 * 0.45, 2),
+        "A201": _format_decimal(a20 * 0.9, 2),
         "ARL1": _format_decimal(arlk * 0.9, 2),
+        "H12_10": h12_10,
+        "H12_8": h12_rlk,
+        "H12_DROP": h12_rlk,
+        "KOB": 1,
         "SV10": sv10,
         "SV101": _format_decimal(sv101, 2),
         "KM10": _format_decimal(km10, 3),
@@ -162,8 +176,8 @@ def calculate_materials_10kv(
         "TM73_KG": 9.85,
         "TM74": 1,
         "TM74_KG": 13.0,
-        "BRANCH_04_KM": "0.004",
-        "BRANCH_04_KG": 3.239,
+        "BRANCH_04_KM": "0.002",
+        "BRANCH_04_KG": 1.62,
         "63": p20,
         "631": _format_decimal(p20 * 22.3, 1),
         "65": a20_base,

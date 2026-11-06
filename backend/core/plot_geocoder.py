@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 
 from .address_parser import (
@@ -20,8 +19,8 @@ from .route_distance import (
     YandexGeocoderProvider,
 )
 
-MAX_GEOCODE_QUERIES = 12
-
+MAX_GEOCODE_QUERIES = 4
+MAX_CANDIDATES_FOR_RANKING = 2
 
 NOMINATIM_DELAY_SECONDS = 1.1
 
@@ -168,12 +167,11 @@ def _geocode_best_match(
 ) -> PlotGeocodeResult | None:
     candidates: list[_GeocodeCandidate] = []
     seen_coords: set[tuple[float, float]] = set()
-    last_nominatim_at = 0.0
+    precise = _address_has_precise_location(parsed)
 
     for index, query in enumerate(queries[:MAX_GEOCODE_QUERIES]):
         try:
-            coordinates = _geocode_query(geocoder, query, last_nominatim_at)
-            last_nominatim_at = time.monotonic()
+            coordinates = geocoder.geocode_address(query)
         except Exception:
             continue
 
@@ -191,7 +189,7 @@ def _geocode_best_match(
                 coordinates,
                 destination_coordinates,
                 min_distance_km=max(min_distance_km, 1.0)
-                if _address_has_precise_location(parsed)
+                if precise
                 else min_distance_km,
             ):
                 continue
@@ -209,11 +207,18 @@ def _geocode_best_match(
             )
         )
 
+        # Точный адрес: первый подходящий результат достаточен.
+        # Город/район без улицы: достаточно 2 точек, чтобы выбрать ближе к РЭС.
+        if precise and in_district:
+            break
+        if not precise and len(candidates) >= MAX_CANDIDATES_FOR_RANKING:
+            break
+
     if not candidates:
         return None
 
     prefer_near_destination = (
-        destination_coordinates is not None and not _address_has_precise_location(parsed)
+        destination_coordinates is not None and not precise
     )
     if prefer_near_destination:
         from .route_distance import straight_line_km
@@ -236,9 +241,9 @@ def _geocode_query(
     query: str,
     last_nominatim_at: float,
 ) -> Coordinates:
-    elapsed = time.monotonic() - last_nominatim_at
-    if elapsed < NOMINATIM_DELAY_SECONDS:
-        time.sleep(NOMINATIM_DELAY_SECONDS - elapsed)
+    # Сохранено для совместимости тестов/вызовов; задержка Nominatim
+    # перенесена в сам провайдер, чтобы не тормозить Yandex/Photon.
+    del last_nominatim_at
     return geocoder.geocode_address(query)
 
 

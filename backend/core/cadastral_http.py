@@ -8,10 +8,8 @@ import subprocess
 from typing import Any
 from urllib.parse import urlencode
 
-import httpx
 
-
-DEFAULT_TIMEOUT = 8.0
+DEFAULT_TIMEOUT = 5.0
 PKK_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -33,7 +31,14 @@ def request_json(
     prefer_curl: bool = False,
 ) -> Any:
     errors: list[str] = []
-    attempts: list[str] = ["curl", "httpx"] if prefer_curl and shutil.which("curl") else ["httpx", "curl"]
+    # Один транспорт: curl быстрее обрывается по --max-time, httpx — запасной.
+    # Не гоняем оба подряд на полном timeout — это удваивало ожидание на PKK.
+    if prefer_curl and shutil.which("curl"):
+        attempts: list[str] = ["curl"]
+    elif prefer_curl:
+        attempts = ["httpx"]
+    else:
+        attempts = ["httpx", "curl"] if shutil.which("curl") else ["httpx"]
 
     for method in attempts:
         if method == "curl" and not shutil.which("curl"):
@@ -55,8 +60,10 @@ def _request_json_httpx(
     headers: dict[str, str] | None,
     timeout: float,
 ) -> Any:
+    import httpx
+
     with httpx.Client(
-        timeout=timeout,
+        timeout=httpx.Timeout(timeout, connect=min(2.0, timeout)),
         follow_redirects=True,
         headers=headers or PKK_HEADERS,
     ) as client:
@@ -82,6 +89,8 @@ def _request_json_curl(
         "-sS",
         "--max-time",
         str(int(timeout)),
+        "--connect-timeout",
+        "2",
         "--tlsv1.2",
         "--compressed",
         url,

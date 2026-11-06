@@ -4,6 +4,7 @@ from typing import Any
 
 from .cadastral_extractor import extract_cadastral_numbers
 from .cadastral_geocoder import CadastralGeocoderService
+from .network import internet_reachable
 from .plot_location import resolve_plot_location
 from .res_resolver import (
     ResResolutionError,
@@ -38,6 +39,14 @@ def calculate_delivery_distance_from_tu(
             f"Используется первый: {cadastral_number}. Все номера: {', '.join(cadastral_numbers)}"
         )
 
+    allow_network = True
+    if cadastral_geocoder is None:
+        allow_network = internet_reachable()
+        if not allow_network and logger:
+            logger.info(
+                "Интернета нет — километраж считаю по местному справочнику, без карт."
+            )
+
     try:
         res_info = resolve_res_address(tu_text)
     except ResResolutionError as exc:
@@ -51,8 +60,20 @@ def calculate_delivery_distance_from_tu(
             f"lat={res_info['coordinates']['lat']}, lon={res_info['coordinates']['lon']}"
         )
 
-    geocoder = cadastral_geocoder or CadastralGeocoderService()
-    router = route_distance_service or RouteDistanceService()
+    if cadastral_geocoder is not None:
+        geocoder = cadastral_geocoder
+    elif allow_network:
+        geocoder = CadastralGeocoderService()
+    else:
+        geocoder = CadastralGeocoderService(providers=[])
+
+    if route_distance_service is not None:
+        router = route_distance_service
+    elif allow_network:
+        router = RouteDistanceService()
+    else:
+        router = RouteDistanceService(routing_providers=[])
+
     destination_coordinates = resolve_res_coordinates(tu_text)
 
     plot_location = resolve_plot_location(
@@ -62,6 +83,7 @@ def calculate_delivery_distance_from_tu(
         res_coordinates=destination_coordinates,
         cadastral_geocoder=geocoder,
         logger=logger,
+        allow_network=allow_network,
     )
     source_coordinates = plot_location.coordinates
     source_method = plot_location.method

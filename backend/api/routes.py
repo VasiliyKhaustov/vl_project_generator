@@ -9,15 +9,26 @@ from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from backend.cad.oda_converter import OdaConverterError
 from backend.cad.oda_dwg_adapter import (
     convert_dwg_plan_to_dxf_with_oda,
     replace_placeholders_in_dwg_with_oda,
 )
+from backend.core.ai_engineer import (
+    chat_with_project,
+    load_ai_engineer_chat,
+    load_ai_engineer_report,
+    llm_configured,
+    run_ai_engineer_review,
+    save_ai_engineer_chat,
+    save_ai_engineer_report,
+)
 from backend.core.calculator import calculate_materials
 from backend.core.calculator_10kv import calculate_materials_10kv
 from backend.core.delivery_distance import DeliveryDistanceError, calculate_delivery_distance_from_tu
+from backend.core.network import run_with_timeout
 from backend.core.dxf_reader import analyze_dxf
 from backend.core.output_manager import OutputManager
 from backend.core.placeholders_10kv import (
@@ -43,11 +54,66 @@ PROJECT_NUMBER_RE = re.compile(r"^ПСД/48/2026/\d{3}(?:-[А-ЯA-Z0-9]+)?$")
 router = APIRouter(prefix="/api")
 
 
+class AiEngineerChatBody(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+_active_pipeline_workers: dict[str, threading.Thread] = {}
+_active_pipeline_lock = threading.Lock()
 
 
 def _new_run_id() -> str:
     return uuid.uuid4().hex
+
+
+def _register_pipeline_worker(run_id: str, worker: threading.Thread) -> None:
+    with _active_pipeline_lock:
+        _active_pipeline_workers[run_id] = worker
+
+
+def _unregister_pipeline_worker(run_id: str) -> None:
+    with _active_pipeline_lock:
+        _active_pipeline_workers.pop(run_id, None)
+
+
+def _pipeline_worker_is_alive(run_id: str) -> bool:
+    with _active_pipeline_lock:
+        worker = _active_pipeline_workers.get(run_id)
+    return bool(worker is not None and worker.is_alive())
+
+
+def _mark_run_interrupted(run_id: str, current: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Если фоновый поток умер (reload/crash), не оставляем UI в вечном processing."""
+    payload = dict(current or {})
+    message = (
+        "Обработка прервана: сервер перезапустился или фоновый поток остановился. "
+        "Запустите проект ещё раз."
+    )
+    steps = dict(payload.get("steps") or {})
+    return _write_run_status(
+        run_id,
+        {
+            "success": False,
+            "status": "failed",
+            "project_number": payload.get("project_number", ""),
+            "project_type": payload.get("project_type", ""),
+            "warnings": payload.get("warnings") or [],
+            "message": message,
+            "detail": message,
+            "note_download_url": payload.get("note_download_url")
+            or _session_download_urls(run_id)["note_download_url"],
+            "steps": {
+                "files_uploaded": bool(steps.get("files_uploaded")),
+                "tu_extracted": bool(steps.get("tu_extracted")),
+                "plan_analyzed": bool(steps.get("plan_analyzed")),
+                "replacement_map_created": bool(steps.get("replacement_map_created")),
+                "dwg_filled": bool(steps.get("dwg_filled")) or _note_ready_for_run(run_id),
+                "pdf_created": False,
+                "completed": False,
+            },
+        },
+    )
 
 
 def _validate_run_id(run_id: str) -> str:
@@ -102,16 +168,59 @@ def _run_status_path(run_id: str) -> Path:
     return _output_for_run(run_id).data_dir / "run_status.json"
 
 
+_STEP_PROGRESS = (
+    ("files_uploaded", 8),
+    ("tu_extracted", 18),
+    ("plan_analyzed", 34),
+    ("replacement_map_created", 50),
+    ("dwg_filled", 88),
+    ("completed", 100),
+)
+
+
+def _merge_run_steps(old: dict[str, Any] | None, new: dict[str, Any] | None) -> dict[str, bool]:
+    merged: dict[str, bool] = {}
+    for key, _weight in _STEP_PROGRESS:
+        merged[key] = bool((old or {}).get(key)) or bool((new or {}).get(key))
+    for key, value in {**(old or {}), **(new or {})}.items():
+        if key not in merged:
+            merged[key] = bool(value) or bool((old or {}).get(key))
+    return merged
+
+
+def _compute_run_progress(payload: dict[str, Any], previous: Any = 0) -> int:
+    status = str(payload.get("status") or "")
+    if status in {"completed", "completed_with_warnings"}:
+        return 100
+    steps = payload.get("steps") or {}
+    best = 0
+    for key, weight in _STEP_PROGRESS:
+        if steps.get(key):
+            best = weight
+    try:
+        previous_value = int(previous or 0)
+    except (TypeError, ValueError):
+        previous_value = 0
+    if status == "failed":
+        return max(0, min(99, previous_value or best))
+    return max(previous_value, min(99, best))
+
+
 def _write_run_status(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     output = _output_for_run(run_id)
     output.prepare()
+    previous = _read_run_status(run_id) or {}
     data = {
         "run_id": run_id,
         **payload,
     }
+    data["steps"] = _merge_run_steps(previous.get("steps"), data.get("steps"))
+    data["progress"] = _compute_run_progress(data, previous.get("progress"))
     path = _run_status_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
     return data
 
 
@@ -151,6 +260,7 @@ def _recover_run_status(run_id: str) -> dict[str, Any] | None:
         note_path = output.dwg_dir / "note_result.dwg"
         if not note_path.exists():
             note_path = output.dwg_dir / "note_result.dxf"
+        ai_report = load_ai_engineer_report(output.data_dir)
         return {
             "success": True,
             "status": "completed",
@@ -161,6 +271,7 @@ def _recover_run_status(run_id: str) -> dict[str, Any] | None:
             "message": "Записка уже сформирована.",
             "note_download_url": download_urls["note_download_url"],
             "note_file_name": note_path.name,
+            "ai_engineer": ai_report,
             "files": {
                 "note_result": str(note_path),
                 "log": str(output.logs_dir / "log.txt"),
@@ -376,6 +487,7 @@ async def process_project(
         daemon=True,
         name=f"project-pipeline-{session_id[:8]}",
     )
+    _register_pipeline_worker(session_id, worker)
     worker.start()
     return initial_status
 
@@ -424,12 +536,25 @@ def _execute_project_pipeline(
         except WireSelectionError as exc:
             raise ValueError(str(exc)) from exc
 
+        _update_run_progress(
+            session_id,
+            message="Считаю километраж до РЭС…",
+            steps={"tu_extracted": True},
+            project_number=project_number,
+            note_download_url=download_urls["note_download_url"],
+        )
         try:
-            route_distance_result = calculate_delivery_distance_from_tu(
-                read_tu_text(tu_path_obj),
-                fallback_address=str(tu_data.get("ADRESS", "") or ""),
-                logger=logger,
-            )
+            tu_text_for_route = read_tu_text(tu_path_obj)
+            fallback_address = str(tu_data.get("ADRESS", "") or "")
+
+            def _calc_delivery() -> dict[str, Any]:
+                return calculate_delivery_distance_from_tu(
+                    tu_text_for_route,
+                    fallback_address=fallback_address,
+                    logger=logger,
+                )
+
+            route_distance_result = run_with_timeout(_calc_delivery, 8.0)
             tu_data["route_distance_km"] = route_distance_result["distanceKm"]
             tu_data["route_distance_meta"] = route_distance_result
             logger.info(
@@ -448,8 +573,20 @@ def _execute_project_pipeline(
                     f"({route_distance_result.get('sourceMethod', 'неизвестно')}). "
                     "При необходимости проверьте километраж."
                 )
-        except DeliveryDistanceError as exc:
-            warning = str(exc)
+        except TimeoutError:
+            warning = (
+                "Километраж до РЭС не дождался ответа карт. "
+                "Записка собирается без этого поля или по местной оценке."
+            )
+            warnings.append(warning)
+            logger.warning(warning)
+        except (DeliveryDistanceError, Exception) as exc:
+            warning = str(exc) or "Километраж до РЭС не рассчитан."
+            if not isinstance(exc, DeliveryDistanceError):
+                warning = (
+                    "Километраж до РЭС не рассчитан (нет ответа карт / нет интернета). "
+                    "Записка собирается без этого поля."
+                )
             warnings.append(warning)
             logger.warning(warning)
 
@@ -571,6 +708,15 @@ def _execute_project_pipeline(
         )
 
         logger.info("Начинаю заполнение DWG-записки (ODA). Это может занять несколько минут...")
+        _update_run_progress(
+            session_id,
+            message="Заполняю пояснительную записку…",
+            steps={"replacement_map_created": True},
+            project_number=project_number,
+            project_type="10kv" if project_is_10kv else "0.4kv",
+            note_download_url=download_urls["note_download_url"],
+            warnings=warnings,
+        )
         note_path = output.dwg_dir / "note_result.dwg"
         for stale_name in ("note_result.dxf", "note_result_filled.dxf"):
             stale_path = output.dwg_dir / stale_name
@@ -625,6 +771,68 @@ def _execute_project_pipeline(
         )
         logger.info(f"Архив проекта обновлён: {archive_dir}")
 
+        ai_report = None
+        ai_report_path = None
+        if note_created:
+            logger.info("Запускаю AI Engineer (пост-проверка, проект не изменяется)...")
+            try:
+                tu_text_for_ai = ""
+                try:
+                    tu_text_for_ai = read_tu_text(tu_path_obj)
+                except Exception:
+                    tu_text_for_ai = ""
+                ai_report = run_ai_engineer_review(
+                    project_data=project_data,
+                    replacement_map=replacement_map,
+                    cad_result=cad_result,
+                    pipeline_warnings=warnings,
+                    note_path=note_path,
+                    plan_path=plan_dxf_path,
+                    tu_text=tu_text_for_ai,
+                    enable_llm=False,
+                )
+                ai_report_path = save_ai_engineer_report(output.data_dir, ai_report)
+                # Дублируем геометрические warning в общий список — видно даже без вкладки AI.
+                for finding in ai_report.get("findings") or []:
+                    if finding.get("severity") != "warning":
+                        continue
+                    title = str(finding.get("title") or "").strip()
+                    if not title:
+                        continue
+                    if title not in warnings:
+                        warnings.append(f"AI Engineer: {title}")
+                logger.info(
+                    "AI Engineer готов: рейтинг "
+                    f"{ai_report.get('score')}%, замечаний "
+                    f"{len(ai_report.get('findings') or [])}."
+                )
+            except Exception as ai_exc:
+                logger.warning(f"AI Engineer не выполнил проверку: {ai_exc}")
+                ai_report = {
+                    "module": "AI Engineer",
+                    "readonly": True,
+                    "does_not_modify_project": True,
+                    "mode": "error",
+                    "score": 0,
+                    "status": "critical",
+                    "summary": "Не удалось сформировать отчёт AI Engineer",
+                    "checked": [],
+                    "findings": [
+                        {
+                            "id": "ai_engineer_failed",
+                            "severity": "warning",
+                            "category": "general",
+                            "title": "AI Engineer завершился с ошибкой",
+                            "reason": str(ai_exc),
+                            "action": "Посмотреть →",
+                        }
+                    ],
+                    "disclaimer": (
+                        "Все замечания — рекомендации для проектировщика. "
+                        "AI Engineer не изменяет проект."
+                    ),
+                }
+
         result = {
             "success": note_created,
             "status": "completed_with_warnings" if note_created and (unresolved or warnings) else (
@@ -649,9 +857,11 @@ def _execute_project_pipeline(
                 "tu_upload": str(tu_path_obj),
                 "plan_upload": str(plan_path_obj),
                 "log": str(output.logs_dir / "log.txt"),
+                "ai_engineer_report": str(ai_report_path) if ai_report_path else None,
             },
             "cad": cad_result,
             "wire": wire_data,
+            "ai_engineer": ai_report,
             "steps": {
                 "files_uploaded": True,
                 "tu_extracted": True,
@@ -686,6 +896,8 @@ def _execute_project_pipeline(
                 },
             },
         )
+    finally:
+        _unregister_pipeline_worker(session_id)
 
 
 @router.get("/status/{run_id}")
@@ -698,11 +910,210 @@ def get_run_status(run_id: str) -> dict[str, Any]:
             recovered = _recover_run_status(session_id)
             if recovered and recovered.get("status") == "completed":
                 return _write_run_status(session_id, recovered)
+        if status.get("status") == "processing" and not _pipeline_worker_is_alive(session_id):
+            return _mark_run_interrupted(session_id, status)
+        if not status.get("ai_engineer"):
+            report = load_ai_engineer_report(_output_for_run(session_id).data_dir)
+            if report:
+                status = {**status, "ai_engineer": report}
+        if status.get("progress") is None:
+            status = {**status, "progress": _compute_run_progress(status)}
         return status
     recovered = _recover_run_status(session_id)
     if recovered:
+        if recovered.get("status") == "processing" and not _pipeline_worker_is_alive(session_id):
+            return _mark_run_interrupted(session_id, recovered)
+        recovered["progress"] = _compute_run_progress(recovered)
         return recovered
     raise HTTPException(status_code=404, detail="Сессия проекта не найдена.")
+
+
+def _resolve_plan_dxf_for_run(session_id: str, output: OutputManager) -> Path | None:
+    """Ищет DXF плана для AI Engineer: uploads, temp, archive, путь из status."""
+    status = _read_run_status(session_id) or {}
+    candidates: list[Path] = []
+
+    plan_upload = status.get("files", {}).get("plan_upload") if isinstance(status.get("files"), dict) else None
+    if plan_upload:
+        upload_path = Path(str(plan_upload))
+        if upload_path.exists() and upload_path.suffix.lower() == ".dxf":
+            candidates.append(upload_path)
+
+    archive = status.get("files", {}).get("project_archive") if isinstance(status.get("files"), dict) else None
+    if archive:
+        archive_dir = Path(str(archive))
+        if archive_dir.is_dir():
+            candidates.extend(sorted(archive_dir.glob("*.dxf"), key=lambda path: path.stat().st_mtime, reverse=True))
+
+    for folder in (output.uploads_dir, output.temp_dir):
+        if folder.exists():
+            candidates.extend(sorted(folder.glob("*.dxf"), key=lambda path: path.stat().st_mtime, reverse=True))
+
+    # Предпочитаем detect_plan / uploaded plan, не template_temp / filled_temp.
+    preferred = [
+        path
+        for path in candidates
+        if path.exists()
+        and path.suffix.lower() == ".dxf"
+        and "template" not in path.name.lower()
+        and "filled" not in path.name.lower()
+        and "note" not in path.name.lower()
+    ]
+    if preferred:
+        return preferred[0]
+    for path in candidates:
+        if path.exists() and path.suffix.lower() == ".dxf":
+            return path
+    return None
+
+
+def _general_chat_dir() -> Path:
+    # Desktop/output в iCloud может зависнуть на записи — чат тогда падает в браузере.
+    path = Path.home() / "Library" / "Application Support" / "PRO-VL" / "ai_engineer_chat"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@router.get("/ai-engineer/chat")
+def get_ai_engineer_general_chat() -> dict[str, Any]:
+    """Чат по нормам без сформированного проекта."""
+    return {
+        "configured": llm_configured(),
+        "scope": "general",
+        "messages": load_ai_engineer_chat(_general_chat_dir()),
+    }
+
+
+@router.post("/ai-engineer/chat")
+def post_ai_engineer_general_chat(body: AiEngineerChatBody) -> dict[str, Any]:
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="Введите вопрос.")
+    data_dir = _general_chat_dir()
+    history = load_ai_engineer_chat(data_dir)
+    result = chat_with_project(
+        message=message,
+        project_data={},
+        replacement_map={},
+        report={},
+        cad_result={},
+        history=history,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=str(result.get("error") or "Чат недоступен."))
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": str(result.get("reply") or "")})
+    try:
+        save_ai_engineer_chat(data_dir, history)
+        messages = load_ai_engineer_chat(data_dir)
+    except OSError:
+        messages = history[-40:]
+    return {
+        "ok": True,
+        "reply": result["reply"],
+        "model": result.get("model") or "",
+        "scope": "general",
+        "messages": messages,
+    }
+
+
+@router.get("/ai-engineer/{run_id}")
+def get_ai_engineer_report(run_id: str, refresh: bool = False) -> dict[str, Any]:
+    """Возвращает отчёт AI Engineer по готовому проекту (без изменения файлов)."""
+    session_id = _validate_run_id(run_id)
+    output = _output_for_run(session_id)
+    if not refresh:
+        report = load_ai_engineer_report(output.data_dir)
+        if report:
+            return report
+
+    project_path = output.data_dir / "project_data.json"
+    map_path = output.data_dir / "replacement_map.json"
+    if not project_path.exists() or not map_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Отчёт AI Engineer ещё не готов: сначала сформируйте проект.",
+        )
+    try:
+        project_data = json.loads(project_path.read_text(encoding="utf-8"))
+        replacement_map = json.loads(map_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"Повреждены JSON проекта: {exc}") from exc
+
+    status = _read_run_status(session_id) or {}
+    note_path = output.dwg_dir / "note_result.dwg"
+    if not note_path.exists():
+        note_path = output.dwg_dir / "note_result.dxf"
+    plan_path = _resolve_plan_dxf_for_run(session_id, output)
+    report = run_ai_engineer_review(
+        project_data=project_data,
+        replacement_map=replacement_map,
+        cad_result=status.get("cad") or {},
+        pipeline_warnings=list(status.get("warnings") or []),
+        note_path=note_path if note_path.exists() else None,
+        plan_path=plan_path,
+        tu_text="",
+        enable_llm=False,
+    )
+    save_ai_engineer_report(output.data_dir, report)
+    return report
+
+
+@router.get("/ai-engineer/{run_id}/chat")
+def get_ai_engineer_chat(run_id: str) -> dict[str, Any]:
+    session_id = _validate_run_id(run_id)
+    output = _output_for_run(session_id)
+    if not (output.data_dir / "project_data.json").exists():
+        raise HTTPException(status_code=404, detail="Сначала сформируйте проект.")
+    return {
+        "configured": llm_configured(),
+        "messages": load_ai_engineer_chat(output.data_dir),
+    }
+
+
+@router.post("/ai-engineer/{run_id}/chat")
+def post_ai_engineer_chat(run_id: str, body: AiEngineerChatBody) -> dict[str, Any]:
+    session_id = _validate_run_id(run_id)
+    output = _output_for_run(session_id)
+    project_path = output.data_dir / "project_data.json"
+    map_path = output.data_dir / "replacement_map.json"
+    if not project_path.exists() or not map_path.exists():
+        raise HTTPException(status_code=404, detail="Сначала сформируйте проект.")
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="Введите вопрос.")
+    try:
+        project_data = json.loads(project_path.read_text(encoding="utf-8"))
+        replacement_map = json.loads(map_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"Повреждены JSON проекта: {exc}") from exc
+
+    report = load_ai_engineer_report(output.data_dir) or {}
+    status = _read_run_status(session_id) or {}
+    history = load_ai_engineer_chat(output.data_dir)
+    result = chat_with_project(
+        message=message,
+        project_data=project_data,
+        replacement_map=replacement_map,
+        report=report,
+        cad_result=status.get("cad") or {},
+        history=history,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=str(result.get("error") or "Чат недоступен."))
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": str(result.get("reply") or "")})
+    try:
+        save_ai_engineer_chat(output.data_dir, history)
+        messages = load_ai_engineer_chat(output.data_dir)
+    except OSError:
+        messages = history[-40:]
+    return {
+        "ok": True,
+        "reply": result["reply"],
+        "model": result.get("model") or "",
+        "messages": messages,
+    }
 
 
 @router.post("/validate")

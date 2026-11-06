@@ -33,7 +33,7 @@ class CadastralGeocoderError(Exception):
 
 class CadastralGeocoderService:
     def __init__(self, providers: list[CadastralProvider] | None = None) -> None:
-        self._providers = providers or _default_cadastral_providers()
+        self._providers = list(providers) if providers is not None else _default_cadastral_providers()
 
     def get_coordinates_by_cadastral_number(self, cadastral_number: str) -> Coordinates:
         normalized = normalize_cadastral_number(cadastral_number)
@@ -71,29 +71,26 @@ class PkkPublicMapProvider:
         return None
 
     def _fetch_from_layer(self, host: str, layer: int, cadastral_number: str) -> Coordinates | None:
-        for attempt in range(2):
-            try:
-                payload = request_json(
-                    f"{host}/api/features/{layer}",
-                    params={"text": cadastral_number, "limit": 1},
-                    headers={
-                        **PKK_HEADERS,
-                        "Referer": f"{host}/",
-                        "Origin": host,
-                    },
-                    prefer_curl=True,
-                )
-            except Exception:
-                if attempt == 0:
-                    continue
-                return None
-            for feature in parse_pkk_features(payload):
-                point = coordinates_from_feature(feature)
-                if point is None:
-                    continue
-                lat, lon = web_mercator_to_wgs84(point[0], point[1])
-                return Coordinates(lat=lat, lon=lon)
+        try:
+            payload = request_json(
+                f"{host}/api/features/{layer}",
+                params={"text": cadastral_number, "limit": 1},
+                headers={
+                    **PKK_HEADERS,
+                    "Referer": f"{host}/",
+                    "Origin": host,
+                },
+                timeout=5.0,
+                prefer_curl=True,
+            )
+        except Exception:
             return None
+        for feature in parse_pkk_features(payload):
+            point = coordinates_from_feature(feature)
+            if point is None:
+                continue
+            lat, lon = web_mercator_to_wgs84(point[0], point[1])
+            return Coordinates(lat=lat, lon=lon)
         return None
 
 

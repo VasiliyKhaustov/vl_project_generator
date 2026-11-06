@@ -47,6 +47,7 @@ def resolve_plot_location(
     res_coordinates: Coordinates,
     cadastral_geocoder: CadastralGeocoderService | None = None,
     logger: Any | None = None,
+    allow_network: bool = True,
 ) -> PlotLocationResult:
     geocoder = cadastral_geocoder or CadastralGeocoderService()
     plot_address = plot_address.strip()
@@ -61,6 +62,15 @@ def resolve_plot_location(
                     f"lat={gazetteer.coordinates.lat}, lon={gazetteer.coordinates.lon}"
                 )
             return gazetteer
+
+    if not allow_network:
+        if logger:
+            logger.info("Сеть недоступна — координаты участка без кадастровой карты и геокодера.")
+        if plot_address:
+            gazetteer = _lookup_gazetteer(plot_address, res_coordinates)
+            if gazetteer is not None:
+                return gazetteer
+        return _district_fallback(tu_text, res_coordinates)
 
     pkk_result = _try_pkk_coordinates(
         geocoder,

@@ -110,7 +110,9 @@ CLIMATE_VALUES = {
 
 def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> dict[str, Any]:
     supports = plan_data.get("supports", {})
-    p23 = int(supports.get("P23", 0) or 0)
+    p23_regular = int(supports.get("P23", 0) or 0)
+    pp23 = int(supports.get("PP23", 0) or 0)
+    p23 = p23_regular + pp23
     a23 = int(supports.get("A23", 0) or 0)
     ya23 = int(supports.get("YA23", 0) or 0)
     k21 = int(supports.get("K21", 0) or 0)
@@ -133,13 +135,13 @@ def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> d
         sech_kg = ""
 
     total_supports = p23 + a23 + ya23 + k21
-    p23_1 = p23 * 0.36
+    p23_1 = p23_regular * 0.36 + pp23 * 0.45
     a231 = a23 * 0.72
     ya231 = ya23 * 0.9
     k21_1 = k21 * 0.45
     s1 = p23_1 + a231 + ya231 + k21_1
-    pole_5 = k21 + ya23 * 2
-    pole_3 = p23 + a23 * 2
+    pole_5 = k21 + ya23 * 2 + pp23
+    pole_3 = p23_regular + a23 * 2
 
     is_three_phase = "трехфаз" in phase or "трёхфаз" in phase
     is_single_phase = "однофаз" in phase
@@ -161,6 +163,7 @@ def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> d
         "LINE_LENGTH_M": line_length_m,
         "LINE_LENGTH_KM": line_length_km,
         "P23": p23,
+        "PP23": pp23,
         "A23": a23,
         "YA23": ya23,
         "K21": k21,

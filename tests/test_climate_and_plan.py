@@ -108,6 +108,15 @@ class PlanSupportCountTests(unittest.TestCase):
         self.assertEqual(data["supports"]["A23"], 2)
         self.assertEqual(data["line_length_m"], 227.0)
 
+    def test_project_259_does_not_sum_overlapping_span_dimensions(self) -> None:
+        plan_path = Path("output/VsePro/ПСД_48_2026_259/ПСД-48-2026-259 План.dxf")
+        if not plan_path.exists():
+            self.skipTest("Пример плана 259 недоступен в рабочей копии.")
+        data, _ = analyze_dxf(plan_path)
+        self.assertAlmostEqual(data["line_length_m"], 119.355, places=2)
+        self.assertAlmostEqual(data["line_length_km"], 0.119, places=3)
+        self.assertNotEqual(data["line_length_m"], 128.0)
+
 
 if __name__ == "__main__":
     unittest.main()

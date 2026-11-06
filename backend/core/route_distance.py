@@ -42,7 +42,7 @@ class RouteDistanceResult:
 
 class AddressGeocoderService:
     def __init__(self, providers: list[GeocodingProvider] | None = None) -> None:
-        self._providers = providers or _default_geocoding_providers()
+        self._providers = list(providers) if providers is not None else _default_geocoding_providers()
 
     def geocode_address(self, address: str) -> Coordinates:
         errors: list[str] = []
@@ -65,8 +65,12 @@ class RouteDistanceService:
         geocoder: AddressGeocoderService | None = None,
         routing_providers: list[RoutingProvider] | None = None,
     ) -> None:
-        self._geocoder = geocoder or AddressGeocoderService()
-        self._routing_providers = routing_providers or _default_routing_providers()
+        self._geocoder = geocoder if geocoder is not None else AddressGeocoderService()
+        self._routing_providers = (
+            list(routing_providers)
+            if routing_providers is not None
+            else _default_routing_providers()
+        )
 
     def get_driving_distance_km(
         self,
@@ -159,24 +163,36 @@ class YandexGeocoderProvider:
 
 class NominatimGeocoderProvider:
     name = "nominatim"
+    _last_call_at = 0.0
 
     def geocode_address(self, address: str) -> Coordinates | None:
         import httpx
+        import time
 
-        response = httpx.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": address,
-                "format": "json",
-                "limit": 1,
-                "countrycodes": "ru",
-                "viewbox": "37.5,53.6,41.0,51.8",
-                "bounded": 0,
-            },
-            timeout=20.0,
-            headers={"User-Agent": "vl-project-generator/1.0"},
-        )
-        response.raise_for_status()
+        elapsed = time.monotonic() - NominatimGeocoderProvider._last_call_at
+        if elapsed < 1.1:
+            time.sleep(1.1 - elapsed)
+
+        try:
+            response = httpx.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={
+                    "q": address,
+                    "format": "json",
+                    "limit": 1,
+                    "countrycodes": "ru",
+                    "viewbox": "37.5,53.6,41.0,51.8",
+                    "bounded": 0,
+                },
+                timeout=httpx.Timeout(8.0, connect=2.0),
+                headers={"User-Agent": "vl-project-generator/1.0"},
+            )
+            response.raise_for_status()
+        except Exception:
+            return None
+        finally:
+            NominatimGeocoderProvider._last_call_at = time.monotonic()
+
         items = response.json()
         if not items:
             return None
@@ -193,7 +209,7 @@ class PhotonGeocoderProvider:
             response = httpx.get(
                 "https://photon.komoot.io/api/",
                 params={"q": address, "limit": 1, "lang": "ru"},
-                timeout=20.0,
+                timeout=httpx.Timeout(8.0, connect=2.0),
             )
             response.raise_for_status()
             features = response.json().get("features") or []
@@ -343,8 +359,11 @@ class OsrmRoutingProvider:
             f"{base_url}/route/v1/driving/"
             f"{source.lon},{source.lat};{destination.lon},{destination.lat}"
         )
-        response = httpx.get(path, params={"overview": "false"}, timeout=30.0)
-        response.raise_for_status()
+        try:
+            response = httpx.get(path, params={"overview": "false"}, timeout=httpx.Timeout(5.0, connect=2.0))
+            response.raise_for_status()
+        except Exception:
+            return None
         routes = response.json().get("routes") or []
         if not routes:
             return None

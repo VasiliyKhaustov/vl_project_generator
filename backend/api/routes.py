@@ -30,6 +30,7 @@ from backend.core.calculator_10kv import calculate_materials_10kv
 from backend.core.delivery_distance import DeliveryDistanceError, calculate_delivery_distance_from_tu
 from backend.core.network import run_with_timeout
 from backend.core.dxf_reader import analyze_dxf
+from backend.core.app_paths import app_data_dir
 from backend.core.output_manager import OutputManager, note_download_filename
 from backend.core.placeholders_10kv import (
     filter_tu_warnings_10kv,
@@ -981,8 +982,8 @@ def _resolve_plan_dxf_for_run(session_id: str, output: OutputManager) -> Path | 
 
 
 def _general_chat_dir() -> Path:
-    # Desktop/output в iCloud может зависнуть на записи — чат тогда падает в браузере.
-    path = Path.home() / "Library" / "Application Support" / "PRO-VL" / "ai_engineer_chat"
+    # Не писать историю чата в папку проекта: на macOS это iCloud, на Windows часто OneDrive.
+    path = app_data_dir() / "ai_engineer_chat"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

@@ -172,6 +172,17 @@ class OdaConverter:
                 [
                     settings.get("oda", {}).get("windows_exec_path", ""),
                     r"C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe",
+                    r"C:\Program Files (x86)\ODA\ODAFileConverter\ODAFileConverter.exe",
+                ]
+            )
+        else:
+            candidates.extend(
+                [
+                    settings.get("oda", {}).get("linux_exec_path", ""),
+                    "/usr/bin/ODAFileConverter",
+                    "/usr/local/bin/ODAFileConverter",
+                    str(Path.home() / "ODAFileConverter" / "ODAFileConverter"),
+                    "/opt/ODAFileConverter/ODAFileConverter",
                 ]
             )
 

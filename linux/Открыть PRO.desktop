@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Открыть PRO
+Comment=Записка ВЛ 0,4 и 10 кВ
+Exec=/bin/bash -c 'cd "$(dirname "$1")" && exec ./start.sh' bash %k
+Terminal=true
+Categories=Office;
+StartupNotify=true

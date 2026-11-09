@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Автоматизация ТУ</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260827tiles2" />
+  </head>
+  <body data-theme="dark">
+    <div class="page-bg" aria-hidden="true">
+      <div class="page-bg__photo"></div>
+      <div class="page-bg__shimmer"></div>
+      <div class="page-bg__veil"></div>
+    </div>
+    <div class="cursor-light" id="cursorLight"></div>
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <div class="brand" data-i18n="brand">Автоматизация ТУ</div>
+          <div class="system-status" data-i18n="systemStatus">Инженерная система подготовки документации</div>
+        </div>
+        <div class="top-actions">
+          <button class="top-control liquid-control top-control--with-icon" id="openAiEngineerTab" type="button">
+            <img class="ui-photo-icon ui-photo-icon--inline" src="/static/icons/luna.jpg" alt="" aria-hidden="true" />
+            <span data-i18n="aiEngineerTab">AI Engineer</span>
+          </button>
+          <button class="top-control liquid-control" id="openCheckPanel" type="button" data-i18n="checkPanelOpen">Проверка</button>
+          <div class="settings-menu liquid-control" id="settingsMenu">
+            <button
+              class="top-control settings-menu__trigger"
+              id="settingsTrigger"
+              type="button"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="settingsPanel"
+              data-i18n="settingsOpen"
+            >
+              Настройки
+            </button>
+            <div class="settings-menu__panel" id="settingsPanel" hidden>
+              <p class="settings-menu__title" data-i18n="settingsTitle">Настройки</p>
+              <div class="settings-menu__row">
+                <span class="settings-menu__label" data-i18n="languageLabel">Язык</span>
+                <div class="language-picker" id="languagePicker">
+                  <button
+                    class="language-picker__trigger"
+                    id="languageTrigger"
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-controls="languageMenu"
+                  >
+                    <span class="language-picker__flag" id="languageFlag" aria-hidden="true">🇷🇺</span>
+                    <span class="language-picker__name" id="languageName">Русский</span>
+                    <span class="language-picker__chevron" aria-hidden="true"></span>
+                  </button>
+                  <ul class="language-picker__menu" id="languageMenu" role="listbox" hidden>
+                    <li>
+                      <button class="language-picker__option is-active" type="button" role="option" data-lang="ru">
+                        <span class="language-picker__option-flag" aria-hidden="true">🇷🇺</span>
+                        <span>Русский</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button class="language-picker__option" type="button" role="option" data-lang="en">
+                        <span class="language-picker__option-flag" aria-hidden="true">🇬🇧</span>
+                        <span>English</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button class="language-picker__option" type="button" role="option" data-lang="de">
+                        <span class="language-picker__option-flag" aria-hidden="true">🇩🇪</span>
+                        <span>Deutsch</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button class="language-picker__option" type="button" role="option" data-lang="it">
+                        <span class="language-picker__option-flag" aria-hidden="true">🇮🇹</span>
+                        <span>Italiano</span>
+                      </button>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              <div class="settings-menu__row">
+                <span class="settings-menu__label" data-i18n="themeLabel">Тема</span>
+                <button class="settings-menu__action" id="themeToggle" type="button" data-i18n="themeLight">
+                  Светлая тема
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <p class="eyebrow" data-i18n="eyebrow">Локальный инженерный контур</p>
+          <h1 class="hero-title" data-i18n="heroTitle">Автоматизация подготовки документации по ТУ</h1>
+          <p class="hero-copy" data-i18n="heroCopy">
+            Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку.
+          </p>
+        </section>
+
+        <nav class="workspace-tabs" aria-label="Разделы">
+          <button class="workspace-tab is-active" type="button" data-workspace-tab="project" data-i18n="tabProject">
+            Проект
+          </button>
+          <button class="workspace-tab workspace-tab--with-icon" type="button" data-workspace-tab="ai" id="aiEngineerTabButton">
+            <img class="ui-photo-icon ui-photo-icon--inline" src="/static/icons/luna.jpg" alt="" aria-hidden="true" />
+            <span data-i18n="aiEngineerTab">AI Engineer</span>
+          </button>
+        </nav>
+
+        <section class="workspace" data-active-tab="project" id="workspaceRoot">
+          <form class="work-card glass" id="processForm" data-tab-panel="project">
+            <div class="panel-head">
+              <span data-i18n="inputData">Исходные данные</span>
+              <div class="panel-head__actions">
+                <button class="top-control liquid-control" id="addParallelProject" type="button" data-i18n="addParallelProject">
+                  Параллельный проект
+                </button>
+                <span class="run-state" id="runState" data-i18n="idle">Ожидание</span>
+              </div>
+            </div>
+
+            <label class="field field-primary">
+              <span class="field-label" data-i18n="projectNumber">Номер проекта</span>
+              <input
+                id="projectNumber"
+                name="project_number"
+                type="text"
+                placeholder="ПСД/48/2026/052"
+                autocomplete="off"
+                inputmode="text"
+              />
+            </label>
+
+            <div class="field wire-field" id="wireField">
+              <span class="field-label" data-i18n="wirePanelTitle">Выбор провода</span>
+              <div class="language-picker liquid-control" id="wirePicker">
+                <button
+                  class="language-picker__trigger"
+                  id="wireTrigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-controls="wireMenu"
+                  aria-describedby="wireHint"
+                >
+                  <span class="language-picker__name" id="wireValue">Автоматически</span>
+                  <span class="language-picker__chevron" aria-hidden="true"></span>
+                </button>
+                <ul class="language-picker__menu" id="wireMenu" role="listbox" hidden>
+                  <li>
+                    <button class="language-picker__option is-active" type="button" role="option" data-value="auto">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title" data-wire-label="wireAuto">Автоматически</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireAutoMeta">Из технических условий</span>
+                      </span>
+                    </button>
+                  </li>
+                  <li>
+                    <button class="language-picker__option" type="button" role="option" data-value="manual:3*70+1*70">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title">3х70+1х70</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireManualMeta">Ручной выбор</span>
+                      </span>
+                    </button>
+                  </li>
+                  <li>
+                    <button class="language-picker__option" type="button" role="option" data-value="manual:3*50+1*54,6">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title">3х50+1х54,6</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireManualMeta">Ручной выбор</span>
+                      </span>
+                    </button>
+                  </li>
+                  <li>
+                    <button class="language-picker__option" type="button" role="option" data-value="manual:3*35+1*35">
+                      <span class="language-picker__option-copy">
+                        <span class="language-picker__option-title">3х35+1х35</span>
+                        <span class="language-picker__option-meta" data-wire-label="wireManualMeta">Ручной выбор</span>
+                      </span>
+                    </button>
+                  </li>
+                </ul>
+              </div>
+              <input id="wireSelectionMode" name="wire_selection_mode" type="hidden" value="auto" />
+              <input id="wireManualValue" name="wire_manual_value" type="hidden" value="" />
+              <input id="branchPoleType" name="branch_pole_type" type="hidden" value="" />
+              <p class="field-hint wire-hint" id="wireHint" data-i18n="wireHintAuto">Система определит провод сама</p>
+            </div>
+
+            <div class="form-section">
+              <p class="form-section__label" data-i18n="uploadSection">Загрузка исходных файлов</p>
+              <div class="upload-grid">
+              <label class="upload-control upload-control--tu liquid-control" for="tuFile" data-empty="true">
+                <input id="tuFile" name="tu_file" type="file" accept=".docx,.pdf" />
+                <span class="upload-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/files.jpg" alt="" /></span>
+                <span class="upload-label" data-i18n="tuUpload">ТУ DOCX/PDF</span>
+                <span class="upload-name" id="tuName" data-empty="true">Файл не выбран</span>
+              </label>
+
+              <label class="upload-control upload-control--plan liquid-control" for="planFile" data-empty="true">
+                <input id="planFile" name="plan_file" type="file" accept=".dxf,.dwg" />
+                <span class="upload-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/plan.jpg" alt="" /></span>
+                <span class="upload-label" data-i18n="planUpload">План DWG/DXF</span>
+                <span class="upload-name" id="planName" data-empty="true">Файл не выбран</span>
+              </label>
+            </div>
+            </div>
+
+            <div class="notice" id="notice" role="status" aria-live="polite"></div>
+          </form>
+
+          <aside class="status-card glass" id="statusCard" data-tab-panel="project">
+            <div class="live-status" id="liveStatusPanel" hidden>
+              <div class="panel-head">
+                <span data-i18n="processingStatus">Статус обработки</span>
+                <span class="status-progress__value" id="statusProgressValue">0%</span>
+              </div>
+
+              <div class="status-progress" aria-hidden="true">
+                <div class="status-progress__track">
+                  <div class="status-progress__bar" id="statusProgressBar"></div>
+                </div>
+              </div>
+
+              <div class="status-list" id="statusList">
+                <div class="status-item" data-step="files_uploaded">
+                  <span class="status-mark" aria-hidden="true">○</span>
+                  <span class="status-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/files.jpg" alt="" /></span>
+                  <span class="status-label" data-i18n="stepFiles">Файлы загружены</span>
+                </div>
+                <div class="status-item" data-step="tu_extracted">
+                  <span class="status-mark" aria-hidden="true">○</span>
+                  <span class="status-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/luna.jpg" alt="" /></span>
+                  <span class="status-label" data-i18n="stepTu">ТУ проанализированы</span>
+                </div>
+                <div class="status-item" data-step="plan_analyzed">
+                  <span class="status-mark" aria-hidden="true">○</span>
+                  <span class="status-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/plan.jpg" alt="" /></span>
+                  <span class="status-label" data-i18n="stepPlan">Анализ плана</span>
+                </div>
+                <div class="status-item" data-step="replacement_map_created">
+                  <span class="status-mark" aria-hidden="true">○</span>
+                  <span class="status-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/luna.jpg" alt="" /></span>
+                  <span class="status-label" data-i18n="stepMap">Создание карты замен</span>
+                </div>
+                <div class="status-item" data-step="dwg_filled">
+                  <span class="status-mark" aria-hidden="true">○</span>
+                  <span class="status-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/power.jpg" alt="" /></span>
+                  <span class="status-label" data-i18n="stepDwg">Генерация записки</span>
+                </div>
+                <div class="status-item" data-step="completed">
+                  <span class="status-mark" aria-hidden="true">○</span>
+                  <span class="status-icon" aria-hidden="true"><img class="ui-photo-icon" src="/static/icons/done.jpg" alt="" /></span>
+                  <span class="status-label" data-i18n="stepDone">Готово</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-idle" id="statusIdleHint">
+              <p class="status-idle__title" data-i18n="statusIdleTitle">Очередь и прогресс</p>
+              <p class="status-idle__text" data-i18n="statusIdleText">
+                После запуска здесь появится ход обработки и список проектов.
+              </p>
+            </div>
+
+            <div class="projects-panel" id="projectsPanel" hidden>
+              <div class="panel-head projects-panel__head">
+                <span data-i18n="projectsListTitle">Очередь проектов</span>
+                <span class="projects-panel__count" id="projectsCount">0</span>
+              </div>
+              <p class="projects-panel__hint" data-i18n="projectsListHint">
+                Локальный сервер: проекты идут параллельно, у каждого свой прогресс и скачивание.
+              </p>
+              <div class="projects-list" id="projectsList"></div>
+            </div>
+          </aside>
+
+          <section class="ai-engineer glass" id="aiEngineerPanel" data-tab-panel="ai" hidden>
+            <div class="ai-engineer__head">
+              <div>
+                <p class="ai-engineer__eyebrow" data-i18n="aiEngineerEyebrow">Пост-проверка готового проекта</p>
+                <h2 class="ai-engineer__title">
+                  <img class="ui-photo-icon ui-photo-icon--title" src="/static/icons/luna.jpg" alt="" aria-hidden="true" />
+                  <span data-i18n="aiEngineerTitle">AI Engineer</span>
+                </h2>
+              </div>
+              <p class="ai-engineer__badge" id="aiEngineerModeBadge" hidden></p>
+            </div>
+
+            <div class="ai-engineer__idle" id="aiEngineerIdle">
+              <p class="ai-engineer__idle-title" data-i18n="aiEngineerIdleTitle">Отчёт появится после генерации</p>
+              <p class="ai-engineer__idle-text" data-i18n="aiEngineerIdleText">
+                Сначала сформируйте проект на вкладке «Проект». AI Engineer не меняет файлы — только даёт рекомендации.
+              </p>
+            </div>
+
+            <div class="ai-engineer__report" id="aiEngineerReport" hidden>
+              <div class="ai-engineer__score-card">
+                <p class="ai-engineer__score-label" data-i18n="aiEngineerScoreLabel">Общий рейтинг проекта</p>
+                <p class="ai-engineer__score" id="aiEngineerScore">—</p>
+                <p class="ai-engineer__summary" id="aiEngineerSummary"></p>
+              </div>
+
+              <div class="ai-engineer__block">
+                <h3 data-i18n="aiEngineerCheckedTitle">Что проверено</h3>
+                <ul class="ai-engineer__checked" id="aiEngineerChecked"></ul>
+                <p class="ai-engineer__placement" id="aiEngineerPlacement" hidden></p>
+              </div>
+
+              <div class="ai-engineer__block">
+                <h3 data-i18n="aiEngineerFindingsTitle">Замечания</h3>
+                <p class="ai-engineer__findings-count" id="aiEngineerFindingsCount"></p>
+                <div class="ai-engineer__findings" id="aiEngineerFindings"></div>
+              </div>
+
+              <p class="ai-engineer__disclaimer" id="aiEngineerDisclaimer" data-i18n="aiEngineerDisclaimer">
+                Все замечания — рекомендации. AI Engineer не изменяет проект автоматически.
+              </p>
+            </div>
+
+            <div class="ai-chat" id="aiEngineerChat">
+                <div class="ai-chat__aurora" aria-hidden="true"></div>
+                <div class="ai-chat__head">
+                  <div class="ai-chat__persona">
+                    <span class="ai-chat__avatar">
+                      <img src="/static/icons/luna.jpg" alt="" />
+                    </span>
+                    <div>
+                      <p class="ai-chat__name" data-i18n="aiEngineerChatTitle">Инженер в чате</p>
+                      <p class="ai-chat__live">
+                        <span class="ai-chat__dot" aria-hidden="true"></span>
+                        <span class="ai-chat__live-ready" data-i18n="aiEngineerChatLive">Онлайн · знает этот проект</span>
+                        <span class="ai-chat__live-wait" data-i18n="aiEngineerChatStandby">Онлайн · нормы и правила</span>
+                      </p>
+                    </div>
+                  </div>
+                  <span class="ai-chat__luna">Luna</span>
+                </div>
+                <p class="ai-chat__hint" data-i18n="aiEngineerChatHint">
+                  Спросите по нормам ВЛ или по этому проекту. Проект не обязателен — Luna отвечает и без него.
+                </p>
+                <div class="ai-chat__log" id="aiEngineerChatLog"></div>
+                <div class="ai-chat__typing" id="aiEngineerChatTyping" hidden>
+                  <span class="ai-chat__avatar ai-chat__avatar--mini">
+                    <img src="/static/icons/luna.jpg" alt="" />
+                  </span>
+                  <p class="ai-chat__dots" aria-hidden="true"><i></i><i></i><i></i></p>
+                </div>
+                <div class="ai-chat__chips">
+                  <button type="button" class="ai-chat__chip ai-chat__chip--general" data-chat-prompt="Сколько зажимов F207 нужно на одну опору А23 и почему?">
+                    F207 на А23
+                  </button>
+                  <button type="button" class="ai-chat__chip ai-chat__chip--general" data-chat-prompt="Чем опора ПП23 отличается от П23 и какую стойку ставить?">
+                    ПП23 или П23?
+                  </button>
+                  <button type="button" class="ai-chat__chip ai-chat__chip--general" data-chat-prompt="Почему пролёт 0,4 кВ обычно не больше 42 метров?">
+                    Пролёт 42 м
+                  </button>
+                  <button type="button" class="ai-chat__chip ai-chat__chip--project" data-chat-prompt="Как исправить замечания в этом проекте?">
+                    Как исправить замечания?
+                  </button>
+                  <button type="button" class="ai-chat__chip ai-chat__chip--project" data-chat-prompt="Какие опоры стоят неверно и что поставить вместо них?">
+                    Какие опоры неверные?
+                  </button>
+                  <button type="button" class="ai-chat__chip ai-chat__chip--project" data-chat-prompt="Коротко объясни, что в этом проекте самое важное проверить глазами.">
+                    Что проверить глазами?
+                  </button>
+                </div>
+                <form class="ai-chat__form" id="aiEngineerChatForm">
+                  <input
+                    class="ai-chat__input"
+                    id="aiEngineerChatInput"
+                    type="text"
+                    maxlength="2000"
+                    autocomplete="off"
+                    data-i18n-placeholder="aiEngineerChatPlaceholder"
+                    placeholder="Спросите по нормам или по проекту…"
+                  />
+                  <button class="ai-chat__send" id="aiEngineerChatSend" type="submit">
+                    <span data-i18n="aiEngineerChatSend">Спросить</span>
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <path fill="currentColor" d="M3.4 20.6 21 12 3.4 3.4l2.2 6.6L14 12l-8.4 2z" />
+                    </svg>
+                  </button>
+                </form>
+                <p class="ai-chat__status" id="aiEngineerChatStatus"></p>
+              </div>
+          </section>
+        </section>
+
+        <section class="benefits" id="benefitsPanel" aria-label="Возможности">
+          <article class="benefit-card" data-stage="detect">
+            <span class="benefit-card__media" aria-hidden="true">
+              <img src="/static/icons/tile-voltage.jpg" alt="" />
+            </span>
+            <span class="benefit-card__glint" aria-hidden="true"></span>
+            <p class="benefit-card__icon" aria-hidden="true">
+              <img class="ui-photo-icon ui-photo-icon--card" src="/static/icons/power.jpg" alt="" />
+            </p>
+            <h2 data-i18n="cardOneTitle">Определяет тип проекта</h2>
+            <p data-i18n="cardOneText">
+              Сама понимает, это 0,4 кВ или 10 кВ: читает ТУ и план, выбирает нужный шаблон записки.
+            </p>
+          </article>
+          <article class="benefit-card" data-stage="analyze">
+            <span class="benefit-card__media" aria-hidden="true">
+              <img src="/static/icons/tile-plan.jpg" alt="" />
+            </span>
+            <span class="benefit-card__glint" aria-hidden="true"></span>
+            <p class="benefit-card__icon" aria-hidden="true">
+              <img class="ui-photo-icon ui-photo-icon--card" src="/static/icons/plan.jpg" alt="" />
+            </p>
+            <h2 data-i18n="cardTwoTitle">Читает готовый план</h2>
+            <p data-i18n="cardTwoText">
+              Считает длину линии, опоры и заземления. Чертёж не меняет — только извлекает данные.
+            </p>
+          </article>
+          <article class="benefit-card" data-stage="deliver">
+            <span class="benefit-card__media" aria-hidden="true">
+              <img src="/static/icons/tile-note.jpg" alt="" />
+            </span>
+            <span class="benefit-card__glint" aria-hidden="true"></span>
+            <p class="benefit-card__icon" aria-hidden="true">
+              <img class="ui-photo-icon ui-photo-icon--card" src="/static/icons/package.jpg" alt="" />
+            </p>
+            <h2 data-i18n="cardThreeTitle">Собирает записку</h2>
+            <p data-i18n="cardThreeText">
+              Подставляет номер проекта, данные из ТУ и расчёты в копию шаблона и отдаёт файл на скачивание.
+            </p>
+          </article>
+        </section>
+      </main>
+
+      <footer data-i18n="footer">Автоматизация ТУ — инженерный инструмент для подготовки проектной документации</footer>
+    </div>
+
+    <nav class="action-dock" aria-label="Действия">
+      <button class="dock-button dock-start liquid-control" id="startButton" type="submit" form="processForm" data-label="Старт" aria-label="Старт" data-i18n-label="dockStart" data-i18n-aria="dockStart">
+        <span class="dock-icon"><img class="ui-photo-icon ui-photo-icon--dock" src="/static/icons/power.jpg" alt="" /></span>
+      </button>
+      <button class="dock-button dock-note liquid-control" id="downloadNote" type="button" data-label="Скачать записку" aria-label="Скачать записку" data-i18n-label="dockNote" data-i18n-aria="dockNote" disabled>
+        <span class="dock-icon"><img class="ui-photo-icon ui-photo-icon--dock" src="/static/icons/package.jpg" alt="" /></span>
+      </button>
+    </nav>
+
+    <div class="check-panel-backdrop" id="checkPanelBackdrop" hidden></div>
+    <div class="check-panel-backdrop" id="yopkBackdrop" hidden></div>
+    <aside class="yopk-panel glass" id="yopkPanel" aria-hidden="true" aria-labelledby="yopkPanelTitle">
+      <div class="check-panel__head">
+        <div>
+          <p class="check-panel__eyebrow" data-i18n="yopkEyebrow">Проект 10 кВ</p>
+          <h2 class="check-panel__title" id="yopkPanelTitle" data-i18n="yopkTitle">От какой опоры ответвляемся?</h2>
+        </div>
+      </div>
+      <p class="check-panel__copy" data-i18n="yopkCopy">
+        Выберите тип узла ответвления для заполнения поля {{YOPK}} в пояснительной записке.
+      </p>
+      <div class="yopk-actions">
+        <button class="check-panel__submit liquid-control" id="yopkIntermediate" type="button" data-i18n="yopkIntermediate">
+          От промежуточной (УОП)
+        </button>
+        <button class="check-panel__submit liquid-control" id="yopkAnchor" type="button" data-i18n="yopkAnchor">
+          От анкерной (УОК)
+        </button>
+      </div>
+    </aside>
+    <aside class="check-panel glass" id="checkPanel" aria-hidden="true" aria-labelledby="checkPanelTitle">
+      <div class="check-panel__head">
+        <div>
+          <p class="check-panel__eyebrow" data-i18n="checkPanelEyebrow">Предварительная проверка</p>
+          <h2 class="check-panel__title" id="checkPanelTitle" data-i18n="checkPanelTitle">Проверка исходных файлов</h2>
+        </div>
+        <button class="check-panel__close liquid-control" id="closeCheckPanel" type="button" aria-label="Закрыть" data-i18n-aria="checkPanelClose">×</button>
+      </div>
+
+      <p class="check-panel__copy" data-i18n="checkPanelCopy">
+        Загрузите ТУ, план и пояснительную записку. Система проверит извлекаемые данные, опоры на плане и placeholders в записке.
+      </p>
+
+      <label class="check-panel__reuse">
+        <input id="useMainFormFiles" type="checkbox" checked />
+        <span data-i18n="checkPanelReuse">Использовать файлы из основной формы, если они уже выбраны</span>
+      </label>
+
+      <form class="check-panel__form" id="checkForm">
+        <label class="upload-control upload-control--tu liquid-control" for="checkTuFile" data-empty="true">
+          <input id="checkTuFile" name="tu_file" type="file" accept=".docx,.pdf" />
+          <span class="upload-label" data-i18n="tuUpload">ТУ DOCX/PDF</span>
+          <span class="upload-name" id="checkTuName" data-empty="true">Файл не выбран</span>
+        </label>
+
+        <label class="upload-control upload-control--plan liquid-control" for="checkPlanFile" data-empty="true">
+          <input id="checkPlanFile" name="plan_file" type="file" accept=".dxf,.dwg" />
+          <span class="upload-label" data-i18n="planUpload">План DWG/DXF</span>
+          <span class="upload-name" id="checkPlanName" data-empty="true">Файл не выбран</span>
+        </label>
+
+        <label class="upload-control upload-control--note liquid-control" for="checkNoteFile" data-empty="true">
+          <input id="checkNoteFile" name="note_file" type="file" accept=".dwg,.dxf" />
+          <span class="upload-label" data-i18n="checkNoteUpload">Записка DWG/DXF</span>
+          <span class="upload-name" id="checkNoteName" data-empty="true">Файл не выбран</span>
+        </label>
+
+        <p class="check-panel__hint" data-i18n="checkPanelNoteHint">
+          Если записку не загрузить, будет проверен эталонный шаблон, который система выберет автоматически.
+        </p>
+
+        <button class="check-panel__submit liquid-control" id="runCheckButton" type="submit" data-i18n="checkPanelRun">Проверить</button>
+      </form>
+
+      <div class="check-panel__results" id="checkResults" hidden>
+        <div class="check-panel__summary" id="checkSummary"></div>
+        <div class="check-panel__armature" id="checkArmature" hidden>
+          <p class="check-panel__armature-title" data-i18n="checkArmatureTitle">Расчёт арматуры по плану</p>
+          <ul class="check-armature-list" id="checkArmatureList"></ul>
+        </div>
+        <ul class="check-issue-list" id="checkIssueList"></ul>
+      </div>
+    </aside>
+
+    <script src="/static/script.js?v=20260827tiles2"></script>
+  </body>
+</html>

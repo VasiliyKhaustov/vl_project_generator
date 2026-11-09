@@ -159,6 +159,10 @@ def _find_qcad_dwg2pdf_executable(project_root: Path) -> Path | None:
         str(settings.get("qcad_dwg2pdf_path", "")).strip(),
         "/Applications/QCAD-Pro.app/Contents/Resources/dwg2pdf",
         "/Applications/QCAD.app/Contents/Resources/dwg2pdf",
+        r"C:\Program Files\QCAD\dwg2pdf.exe",
+        r"C:\Program Files\QCAD\dwg2pdf.bat",
+        "/usr/bin/dwg2pdf",
+        "/usr/local/bin/dwg2pdf",
     ]
     for candidate in candidates:
         if not candidate:

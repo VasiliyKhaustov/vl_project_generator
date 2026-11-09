@@ -1,0 +1,13 @@
+Как открыть PRO на Windows
+===========================
+
+1. Установите Python 3.11 или новее:
+   https://www.python.org/downloads/
+   В установщике отметьте Add python.exe to PATH.
+2. Для чертежей DWG/DXF установите ODA File Converter:
+   https://www.opendesign.com/guestfiles/oda_file_converter
+3. Дважды щёлкните «Открыть PRO.bat».
+4. Откроется браузер: http://127.0.0.1:8003
+5. Чтобы остановить программу, закройте чёрное окно PRO.
+
+Повторный щелчок по «Открыть PRO.bat» снова открывает страницу, если сервер уже работает.

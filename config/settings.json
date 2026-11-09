@@ -1,7 +1,8 @@
 {
   "oda": {
     "mac_exec_path": "/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter",
-    "windows_exec_path": "C:\\Program Files\\ODA\\ODAFileConverter\\ODAFileConverter.exe"
+    "windows_exec_path": "C:\\Program Files\\ODA\\ODAFileConverter\\ODAFileConverter.exe",
+    "linux_exec_path": "/usr/local/bin/ODAFileConverter"
   },
   "pdf_export": {
     "external_command": "",

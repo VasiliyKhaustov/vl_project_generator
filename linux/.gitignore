@@ -1,0 +1,53 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.venv312/
+venv/
+env/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+
+# Logs
+*.log
+logs/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Generated project files / user uploads
+VsePro/
+uploads/
+output/
+exports/
+
+# IDE
+.idea/
+.vscode/settings.json
+
+# Databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Локальные копии и временные файлы Office (не исходники)
+vl_project_generator_latest/
+vl_project_generator_latest.zip
+~$*

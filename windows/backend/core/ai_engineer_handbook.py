@@ -425,6 +425,30 @@ def local_chat_reply(
 
     lowered = query.lower().replace("ё", "е")
     facts = facts or {}
+    last_user = ""
+    for item in reversed(history or []):
+        if str(item.get("role") or "") == "user":
+            last_user = str(item.get("content") or "").lower().replace("ё", "е")
+            break
+    material_question = lowered
+    already_specific = bool(
+        _detect_armature(lowered)
+        or _detect_topic_10(lowered)
+        or _detect_support_10(lowered)
+        or re.search(r"арматур|материал|лент|изолятор|каки[ех]\s+опор|какую\s+опор|10\s*кв|10кв|0[,.]4", lowered)
+    )
+    if (
+        last_user
+        and not already_specific
+        and len(lowered) < 48
+        and re.search(r"\b(а|и|ну)\b|\bна\b|\bдля\b", lowered)
+        and (
+            _detect_armature(last_user)
+            or _detect_topic_10(last_user)
+            or re.search(r"арматур|материал|лент|изолятор", last_user)
+        )
+    ):
+        material_question = f"{last_user} {lowered}"
 
     greeting_only = bool(
         re.fullmatch(
@@ -451,9 +475,13 @@ def local_chat_reply(
     if layer_reply:
         return sanitize_chat_reply(layer_reply)[:1800]
 
-    armature_reply = _armature_reply(lowered, facts, has_project=has_project)
+    armature_reply = _armature_reply(material_question, facts, has_project=has_project)
     if armature_reply:
         return sanitize_chat_reply(armature_reply)[:1800]
+
+    pole_reply = _pole_choice_reply(lowered)
+    if pole_reply:
+        return sanitize_chat_reply(pole_reply)[:1800]
 
     duplicate_reply = _duplicate_reply(lowered, facts, has_project=has_project)
     if duplicate_reply:
@@ -559,8 +587,200 @@ def _detect_armature(question: str) -> str | None:
     return None
 
 
+def _detect_support_10(question: str) -> str | None:
+    if "уа20" in question or "ua20" in question:
+        return "УА20-3Н"
+    if "уп20" in question or "up20" in question:
+        return "УП20-3Н"
+    if re.search(r"рлк|разъедин", question):
+        return "А20-3Н с РЛК"
+    if re.search(r"(?<![у])а20|(?<![у])a20", question):
+        return "А20-3Н"
+    if "п20" in question or "p20" in question or "тм-63" in question or "тм63" in question:
+        return "П20-3Н"
+    return None
+
+
+def _detect_topic_10(question: str) -> str | None:
+    if re.search(r"шф|изолятор", question):
+        return "шф"
+    if re.search(r"траверс|тм-?6", question):
+        return "траверса"
+    if re.search(r"натяжн|подвеск", question) and _detect_support_10(question):
+        return "подвеска"
+    if re.search(r"х51|x51|хомут", question) and (
+        _detect_support_10(question) or re.search(r"10\s*кв|10кв", question)
+    ):
+        return "хомут"
+    if re.search(r"стойк|св110", question) and (
+        _detect_support_10(question) or re.search(r"10\s*кв|10кв", question)
+    ):
+        return "стойка"
+    if "бетон" in question and (_detect_support_10(question) or re.search(r"10\s*кв|10кв", question)):
+        return "бетон"
+    return None
+
+
+_POLE_10_MATERIALS = {
+    "П20-3Н": (
+        "П20-3Н — промежуточная опора 10 кВ, только на прямой. "
+        "На одну опору: стойка СВ110-5 — 1, траверса ТМ-63 — 1, изоляторы ШФ20УО — 3, хомут Х51 — 1. "
+        "Бетон 0,45 м³. На поворот её не ставьте."
+    ),
+    "А20-3Н": (
+        "А20-3Н — анкерная опора 10 кВ на прямой. "
+        "На одну опору: стойки СВ110-5 — 2, траверса ТМ-65 — 1, траверса ТМ-66 — 1, "
+        "изолятор ШФ20УО — 1, натяжная подвеска — 6 шт. Бетон 0,9 м³. "
+        "Если на этой опоре нужен разъединитель, ставьте А20-3Н с РЛК: арматура та же, "
+        "но натяжная подвеска 3 шт, не 6."
+    ),
+    "А20-3Н с РЛК": (
+        "А20-3Н с РЛК — анкерная опора 10 кВ с разъединителем, на прямой. "
+        "Стойки СВ110-5 — 2, траверсы ТМ-65 и ТМ-66 — по 1, изолятор ШФ20УО — 1. "
+        "Натяжная подвеска — 3 шт, не 6, как у обычной А20-3Н. Остальная арматура как у А20-3Н. "
+        "Бетон 0,9 м³."
+    ),
+    "УП20-3Н": (
+        "УП20-3Н — угловая промежуточная 10 кВ, на повороте. "
+        "На одну опору: изоляторы ШФ20УО — 3, хомут Х51 — 1. "
+        "На прямой вместо неё ставьте П20-3Н."
+    ),
+    "УА20-3Н": (
+        "УА20-3Н — угловая анкерная 10 кВ, на повороте. "
+        "На одну опору: стойки СВ110-5 — 3, траверса ТМ-67 — 1, траверса ТМ-68 — 1, "
+        "изоляторы ШФ20УО — 3, натяжная подвеска — 6 шт. На прямой её не ставят."
+    ),
+}
+
+
+def _topic_10_reply(topic: str, support: str | None) -> str:
+    if topic == "шф":
+        if support and support in _POLE_10_MATERIALS:
+            amount = {"П20-3Н": "3", "УП20-3Н": "3", "А20-3Н": "1", "А20-3Н с РЛК": "1", "УА20-3Н": "3"}[support]
+            return (
+                f"Изоляторы ШФ20УО на одну опору {support}: {amount} шт. "
+                "На весь объект дополнительно ещё 3 изолятора, не на каждую опору."
+            )
+        return (
+            "Изоляторы ШФ20УО на 10 кВ, на одну опору: П20-3Н — 3, УП20-3Н — 3, "
+            "А20-3Н — 1, А20-3Н с РЛК — 1, УА20-3Н — 3. На весь объект ещё +3 шт."
+        )
+    if topic == "траверса":
+        if support == "П20-3Н":
+            return "На П20-3Н одна траверса ТМ-63."
+        if support in {"А20-3Н", "А20-3Н с РЛК"}:
+            return f"На {support}: траверса ТМ-65 — 1 и траверса ТМ-66 — 1."
+        if support == "УА20-3Н":
+            return "На УА20-3Н: траверса ТМ-67 — 1 и траверса ТМ-68 — 1."
+        if support == "УП20-3Н":
+            return "На УП20-3Н отдельную траверсу ТМ-63 не ставят. ТМ-63 — это промежуточная П20-3Н."
+        return (
+            "Траверсы 10 кВ: П20-3Н — ТМ-63 одна. А20-3Н и А20-3Н с РЛК — ТМ-65 и ТМ-66 по одной. "
+            "УА20-3Н — ТМ-67 и ТМ-68 по одной."
+        )
+    if topic == "подвеска":
+        if support == "А20-3Н с РЛК":
+            return "На А20-3Н с РЛК натяжная подвеска — 3 шт. У обычной А20-3Н её 6 шт."
+        if support == "А20-3Н":
+            return "На обычную А20-3Н натяжная подвеска — 6 шт. На А20-3Н с РЛК — 3 шт."
+        if support == "УА20-3Н":
+            return "На УА20-3Н натяжная подвеска — 6 шт."
+        if support in {"П20-3Н", "УП20-3Н"}:
+            return f"На {support} натяжную подвеску не ставят. Она нужна анкерным опорам: А20-3Н — 6, с РЛК — 3, УА20-3Н — 6."
+        return "Натяжная подвеска 10 кВ: А20-3Н — 6 шт, А20-3Н с РЛК — 3 шт, УА20-3Н — 6 шт. На П20-3Н и УП20-3Н её нет."
+    if topic == "хомут":
+        return (
+            "Хомут Х51 на 10 кВ: 1 шт на каждую П20-3Н и на каждую УП20-3Н. "
+            "Плюс ещё 2 хомута на весь объект. На А20-3Н и УА20-3Н этим хомутом опору не комплектуют."
+        )
+    if topic == "стойка":
+        return (
+            "Стойки СВ110-5 на 10 кВ: П20-3Н — 1, А20-3Н — 2, А20-3Н с РЛК — 2, УА20-3Н — 3. "
+            "Бетон: П20-3Н — 0,45 м³, А20-3Н и А20-3Н с РЛК — по 0,9 м³."
+        )
+    if topic == "бетон":
+        return "Бетон 10 кВ: П20-3Н — 0,45 м³ на опору, А20-3Н и А20-3Н с РЛК — по 0,9 м³."
+    return ""
+
+
+def _overview_10_reply() -> str:
+    return (
+        "Арматура и опоры 10 кВ. "
+        "Прямая промежуточная П20-3Н: 1×СВ110-5, 1×ТМ-63, 3×ШФ20УО, 1×Х51, бетон 0,45 м³. "
+        "Прямой анкер А20-3Н: 2×СВ110-5, ТМ-65 и ТМ-66 по 1, 1×ШФ20УО, натяжная подвеска 6 шт, бетон 0,9 м³. "
+        "Анкер с разъединителем А20-3Н с РЛК: то же, но натяжная подвеска 3 шт. "
+        "Угол промежуточный УП20-3Н: 3×ШФ20УО и 1×Х51. "
+        "Угол анкерный УА20-3Н: 3×СВ110-5, ТМ-67 и ТМ-68 по 1, 3×ШФ20УО, натяжная подвеска 6 шт. "
+        "На весь объект ещё +3 изолятора ШФ20УО и +2 хомута Х51. Пролёт не больше 70 м."
+    )
+
+
+def _support_04_materials(support: str) -> str:
+    kits = {
+        "П23": "П23, промежуточная на прямой: лента F207 — 2, скрепа NC20 — 2, подвеска ES15 — 1, зажим CD35 — 1, хомут E778 — 2, зажим P72 — 1. Кронштейна CS10 и зажима PA15 нет. Стойка СВ95-3 — 1, бетон 0,36 м³.",
+        "ПП23": "ПП23 считается как П23 по арматуре: лента F207 — 2, скрепа NC20 — 2, подвеска ES15 — 1. Стойка выше, СВ110-5, потому что участок в габаритах 10 кВ.",
+        "А23": "А23, анкер на прямой: лента F207 — 2, скрепа NC20 — 2, кронштейн CS10 — 2, зажим PA15 — 2, зажим CD35 — 2, хомут E778 — 2, кронштейн У4 — 1. Подвески ES15 нет. Стойки СВ95-3 — 2, бетон 0,72 м³.",
+        "К21": "К21, конец линии на прямой: лента F207 — 2, скрепа NC20 — 2, кронштейн CS10 — 2, зажим PA15 — 2, зажим CD35 — 2, хомут E778 — 2. Подвески ES15 нет. Стойка СВ110-5 — 1, бетон 0,45 м³.",
+        "УА23*": "УА23*, поворот до 90°: лента F207 — 4, скрепа NC20 — 4, кронштейн CS10 — 2, зажим PA15 — 2, зажим CD35 — 2, хомут E778 — 2, стяжка Х89 — 1. Стойки СВ110-5 — 2, бетон 0,9 м³.",
+    }
+    text = kits.get(support, "")
+    if not text:
+        return ""
+    return text + " Лента и скрепа: ещё +6 шт на весь объект, не на каждую опору."
+
+
+def _overview_04_reply() -> str:
+    return (
+        "Арматура 0,4 кВ на одну опору. "
+        "Монтажная лента F207: П23 — 2, А23 — 2, К21 — 2, УА23* — 4, и ещё 6 шт на весь объект. "
+        "Скрепа NC20 — столько же, сколько ленты. "
+        "Подвеска ES15 — 1 только на П23. "
+        "Анкерный кронштейн CS10 и зажим PA15: по 2 на А23, К21 и УА23*, на П23 нет. "
+        "Зажим CD35: П23 — 1, остальные — по 2. Хомут E778 — 2 на каждую опору. "
+        "Зажим P72 — 1 на каждую опору. P95 — всегда 4 шт на объект."
+    )
+
+
+def _project_10_extra(facts: dict[str, Any], support: str | None) -> str:
+    plan = facts.get("план_10") or {}
+    if not isinstance(plan, dict):
+        return ""
+    keys = {
+        "П20-3Н": "опор_П20_3Н",
+        "А20-3Н": "опор_А20_3Н",
+        "УП20-3Н": "опор_УП20_3Н",
+        "УА20-3Н": "опор_УА20_3Н",
+        "А20-3Н с РЛК": "опор_А20_3Н_с_РЛК",
+    }
+    if support and plan.get(keys[support]) not in (None, ""):
+        return f" На этом плане опор {support}: {plan.get(keys[support])}."
+    return ""
+
+
 def _armature_reply(question: str, facts: dict[str, Any], *, has_project: bool) -> str:
+    support10 = _detect_support_10(question)
+    topic10 = _detect_topic_10(question)
+    asks_materials = bool(re.search(r"арматур|материал|комплект", question))
+    asks_10 = bool(re.search(r"(?<!\d)10\s*кв|10кв", question)) or bool(support10 or topic10)
     key = _detect_armature(question)
+    if asks_10 and not key:
+        if topic10:
+            text = _topic_10_reply(topic10, support10)
+        elif support10 and (asks_materials or re.search(r"сколько|что |кака|нужн", question)):
+            text = _POLE_10_MATERIALS[support10]
+        elif asks_materials or asks_10 and re.search(r"арматур|материал", question):
+            text = _overview_10_reply()
+        else:
+            text = ""
+        if text:
+            if has_project:
+                text += _project_10_extra(facts, support10)
+            return text
+    support04 = _detect_support_04(question)
+    if asks_materials and support04 and not (asks_10 and not support04):
+        return _support_04_materials(support04)
+    if asks_materials and not asks_10 and not key:
+        return _overview_04_reply()
     if not key:
         return ""
     name, per_support, extra = _ARMATURE[key]
@@ -578,6 +798,27 @@ def _armature_reply(question: str, facts: dict[str, Any], *, has_project: bool) 
             lines.append(f"{name}: {'; '.join(parts)}.")
         if extra:
             lines.append(extra)
+    if key == "f207":
+        lines.append("Это на каждую опору такого типа, не на всю линию разом.")
+    if has_project and key == "f207":
+        plan = facts.get("план_0_4") or {}
+        if isinstance(plan, dict) and any(
+            plan.get(name) not in (None, "") for name in ("опор_П23", "опор_А23", "опор_К21", "опор_УА23")
+        ):
+            def _as_int(name: str) -> int:
+                try:
+                    return int(plan.get(name) or 0)
+                except (TypeError, ValueError):
+                    return 0
+
+            total = (
+                _as_int("опор_П23") * 2
+                + _as_int("опор_А23") * 2
+                + _as_int("опор_К21") * 2
+                + _as_int("опор_УА23") * 4
+                + 6
+            )
+            lines.append(f"По опорам этого плана ленты F207 выходит {total} шт, уже с 6 штуками на объект.")
     if has_project:
         materials = facts.get("материалы_0_4_по_этому_проекту") or {}
         if isinstance(materials, dict):
@@ -586,6 +827,38 @@ def _armature_reply(question: str, facts: dict[str, Any], *, has_project: bool) 
                     lines.append(f"В этом проекте в ведомости стоит {value}.")
                     break
     return " ".join(lines)
+
+
+def _pole_choice_reply(question: str) -> str:
+    """Какую опору ставить: без длины линии, по ситуации на трассе."""
+    if _parse_length_m(question):
+        return ""
+    asks = bool(
+        re.search(
+            r"каки[ех]\s+опор|какую\s+опор|в каких случаях|когда став|куда став|какой тип|какие став",
+            question,
+        )
+    )
+    if not asks:
+        return ""
+    wants_10 = bool(re.search(r"(?<!\d)10\s*кв|10кв", question)) and not re.search(r"0[,.]4", question)
+    wants_04 = bool(re.search(r"0[,.]4", question)) and not wants_10
+    text_04 = (
+        "0,4 кВ. На прямой: промежуточная П23, анкерная А23, в конце линии К21. "
+        "На повороте до 90° только УА23*. П23, А23 и К21 на угол ставить нельзя. "
+        "Пролёт не больше 42 м."
+    )
+    text_10 = (
+        "10 кВ. На прямой промежуточная — П20-3Н, на прямой анкер — А20-3Н. "
+        "Если на анкере нужен разъединитель — А20-3Н с РЛК. "
+        "На повороте промежуточная — УП20-3Н, на повороте анкер — УА20-3Н. "
+        "П20-3Н и А20-3Н на угол не ставьте. Пролёт не больше 70 м."
+    )
+    if wants_10:
+        return text_10
+    if wants_04:
+        return text_04
+    return text_04 + " " + text_10
 
 
 def _knowledge_reply(question: str) -> str:
@@ -904,6 +1177,17 @@ def _parse_length_m(text: str) -> float | None:
 
 def _layout_estimate_reply(question: str, prior: str, *, has_project: bool) -> str:
     """Считает опоры и заземления на названную длину, даже если вопрос бытовой."""
+    if re.search(
+        r"арматур|материал|лент|изолятор|траверс|хомут|подвеск|скреп|кронштейн|зажим|бетон|стойк",
+        question,
+    ):
+        return ""
+    if (
+        re.search(r"каки[ех]\s+опор|какую\s+опор|в каких случаях|когда став|куда став", question)
+        and _parse_length_m(question) is None
+        and _parse_length_m(prior) is None
+    ):
+        return ""
     asks_this_plan = bool(
         re.search(r"на этом плане|в (этом )?проекте|у меня на плане|уже стоит", question)
     )

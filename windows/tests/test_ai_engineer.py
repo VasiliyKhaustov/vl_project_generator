@@ -582,6 +582,39 @@ class AiEngineerTests(unittest.TestCase):
         self.assertIn("А20-3Н", kv10)
         self.assertNotIn("Заземлений", kv10)
 
+        follow_tape = local_chat_reply(
+            "а на уа23",
+            history=[{"role": "user", "content": "сколько нужно лент на П23"}],
+        )
+        self.assertIn("УА23*", follow_tape)
+        self.assertIn("4 шт", follow_tape)
+
+        p23_kit = local_chat_reply("как насчитывается арматура для опоры П23")
+        self.assertIn("F207", p23_kit)
+        self.assertIn("ES15", p23_kit)
+
+        tape = local_chat_reply("сколько монтажных лент на опоры нужно")
+        self.assertIn("F207", tape)
+        self.assertIn("П23 — 2", tape)
+        self.assertIn("6", tape)
+        self.assertNotIn("Напишите длину", tape)
+
+        arm10 = local_chat_reply("какая арматура на опору А20")
+        self.assertIn("ТМ-65", arm10)
+        self.assertIn("ШФ20УО", arm10)
+        self.assertIn("6 шт", arm10)
+        self.assertNotIn("Напишите длину", arm10)
+
+        poles10 = local_chat_reply("какие опоры ставить на 10 кВ")
+        self.assertIn("П20-3Н", poles10)
+        self.assertIn("УА20-3Н", poles10)
+        self.assertIn("РЛК", poles10)
+        self.assertNotIn("Напишите длину", poles10)
+
+        shf = local_chat_reply("сколько изоляторов ШФ на П20")
+        self.assertIn("3", shf)
+        self.assertIn("ШФ20УО", shf)
+
         vague = local_chat_reply("сколько заземлений и опор поставить")
         self.assertIn("300 м", vague)
         self.assertIn("42", vague)

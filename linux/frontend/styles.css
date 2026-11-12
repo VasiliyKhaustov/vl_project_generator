@@ -3230,13 +3230,30 @@ body.is-check-panel-open .check-panel {
   overflow: visible;
 }
 
-#openAiEngineerTab .beta-tag {
+#openAiEngineerTab .beta-tag,
+#aiEngineerTabButton .beta-tag {
   position: absolute;
   top: -9px;
   right: 6px;
   z-index: 2;
   padding: 3px 6px 4px;
   font-size: 9px;
+}
+
+#aiEngineerTabButton {
+  position: relative;
+  overflow: visible;
+}
+
+.beta-tag--corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 4;
+  padding: 11px 18px 12px;
+  border-radius: 0 26px 0 16px;
+  font-size: 15px;
+  letter-spacing: 0.14em;
 }
 
 .ai-engineer__marks {

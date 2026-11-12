@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Автоматизация ТУ</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261112beta2" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261112beta4" />
   </head>
   <body data-theme="dark">
     <div class="page-bg" aria-hidden="true">
@@ -110,6 +110,7 @@
           <button class="workspace-tab workspace-tab--with-icon" type="button" data-workspace-tab="ai" id="aiEngineerTabButton">
             <img class="ui-photo-icon ui-photo-icon--inline" src="/static/icons/luna.jpg" alt="" aria-hidden="true" />
             <span data-i18n="aiEngineerTab">AI Engineer</span>
+            <span class="beta-tag">BETA</span>
           </button>
         </nav>
 
@@ -282,6 +283,7 @@
           </aside>
 
           <section class="ai-engineer glass" id="aiEngineerPanel" data-tab-panel="ai" hidden>
+            <span class="beta-tag beta-tag--corner">BETA</span>
             <div class="ai-engineer__head">
               <div>
                 <p class="ai-engineer__eyebrow" data-i18n="aiEngineerEyebrow">Пост-проверка готового проекта</p>
@@ -291,7 +293,6 @@
                 </h2>
               </div>
               <div class="ai-engineer__marks">
-                <span class="beta-tag">BETA</span>
                 <p class="ai-engineer__badge" id="aiEngineerModeBadge" hidden></p>
               </div>
             </div>

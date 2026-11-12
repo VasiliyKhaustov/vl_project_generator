@@ -615,6 +615,36 @@ class AiEngineerTests(unittest.TestCase):
         self.assertIn("3", shf)
         self.assertIn("ШФ20УО", shf)
 
+        wrong_conductor = local_chat_reply("Сколько ЗП6 на П20-3Н?")
+        self.assertIn("ЗП6 нет", wrong_conductor)
+        self.assertIn("ЗП1", wrong_conductor)
+        self.assertIn("0 м", wrong_conductor)
+        self.assertIn("0,7", wrong_conductor)
+        self.assertIn("4 м", wrong_conductor)
+        self.assertNotIn("ТМ-63", wrong_conductor)
+
+        zp1_follow = local_chat_reply(
+            "А ЗП1 сколько ставить?",
+            history=[
+                {"role": "user", "content": "А вот если линия с одним углом 400 метров то сколько опор?"},
+                {"role": "user", "content": "Сколько ЗП6 на П20-3Н?"},
+            ],
+        )
+        self.assertIn("ЗП1", zp1_follow)
+        self.assertIn("0 м", zp1_follow)
+        self.assertIn("1,5", zp1_follow)
+        self.assertNotIn("пролёт", zp1_follow)
+
+        nuts = local_chat_reply("сколько гаек М20 на А20-3Н")
+        self.assertIn("3 шт", nuts)
+        self.assertIn("М20", nuts)
+        self.assertNotIn("пролёт", nuts)
+
+        tape_on_10 = local_chat_reply("сколько ленты F207 на П20-3Н")
+        self.assertIn("0,4", tape_on_10)
+        self.assertIn("П23", tape_on_10)
+        self.assertNotIn("ТМ-63", tape_on_10)
+
         vague = local_chat_reply("сколько заземлений и опор поставить")
         self.assertIn("300 м", vague)
         self.assertIn("42", vague)

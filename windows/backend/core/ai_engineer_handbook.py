@@ -433,9 +433,14 @@ def local_chat_reply(
     material_question = lowered
     already_specific = bool(
         _detect_armature(lowered)
+        or _detect_hardware(lowered)
         or _detect_topic_10(lowered)
         or _detect_support_10(lowered)
-        or re.search(r"арматур|материал|лент|изолятор|каки[ех]\s+опор|какую\s+опор|10\s*кв|10кв|0[,.]4", lowered)
+        or re.search(
+            r"арматур|материал|лент|изолятор|зп|проводник|гайк|болт|спираль|вязк|"
+            r"плашеч|подкос|колпач|серьг|каки[ех]\s+опор|какую\s+опор|10\s*кв|10кв|0[,.]4",
+            lowered,
+        )
     )
     if (
         last_user
@@ -475,7 +480,12 @@ def local_chat_reply(
     if layer_reply:
         return sanitize_chat_reply(layer_reply)[:1800]
 
-    armature_reply = _armature_reply(material_question, facts, has_project=has_project)
+    armature_reply = _armature_reply(
+        material_question,
+        facts,
+        has_project=has_project,
+        context=last_user,
+    )
     if armature_reply:
         return sanitize_chat_reply(armature_reply)[:1800]
 
@@ -711,7 +721,9 @@ def _overview_10_reply() -> str:
         "Анкер с разъединителем А20-3Н с РЛК: то же, но натяжная подвеска 3 шт. "
         "Угол промежуточный УП20-3Н: 3×ШФ20УО и 1×Х51. "
         "Угол анкерный УА20-3Н: 3×СВ110-5, ТМ-67 и ТМ-68 по 1, 3×ШФ20УО, натяжная подвеска 6 шт. "
-        "На весь объект ещё +3 изолятора ШФ20УО и +2 хомута Х51. Пролёт не больше 70 м."
+        "На весь объект ещё +3 изолятора ШФ20УО и +2 хомута Х51. "
+        "Заземляющий проводник 10 кВ — ЗП1, не ЗП6: УП20-3Н — 0,7 м, А20-3Н и А20-3Н с РЛК — 1 м, "
+        "УА20-3Н — 1,5 м, на П20-3Н по опоре 0 м, плюс 4 м на весь объект. Пролёт не больше 70 м."
     )
 
 
@@ -737,7 +749,8 @@ def _overview_04_reply() -> str:
         "Подвеска ES15 — 1 только на П23. "
         "Анкерный кронштейн CS10 и зажим PA15: по 2 на А23, К21 и УА23*, на П23 нет. "
         "Зажим CD35: П23 — 1, остальные — по 2. Хомут E778 — 2 на каждую опору. "
-        "Зажим P72 — 1 на каждую опору. P95 — всегда 4 шт на объект."
+        "Зажим P72 — 1 на каждую опору. P95 — всегда 4 шт на объект. "
+        "Заземляющий проводник здесь ЗП6, не ЗП1: П23 — 0,3 м, А23 — 0,65 м, К21 — 0,65 м, УА23* — 1 м."
     )
 
 
@@ -757,7 +770,253 @@ def _project_10_extra(facts: dict[str, Any], support: str | None) -> str:
     return ""
 
 
-def _armature_reply(question: str, facts: dict[str, Any], *, has_project: bool) -> str:
+_HARDWARE_ALIASES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("зп-6", "зп 6", "зп6", "zp-6", "zp 6", "zp6"), "zp6"),
+    (("зп-1", "зп 1", "зп1", "zp-1", "zp 1", "zp1"), "zp1"),
+    (("тм-68", "тм68"), "tm68"),
+    (("тм-67", "тм67"), "tm67"),
+    (("тм-66", "тм66"), "tm66"),
+    (("тм-65", "тм65"), "tm65"),
+    (("тм-63", "тм63"), "tm63"),
+    (("спиральн", "вязк"), "sv"),
+    (("подкос",), "y52"),
+    (("колпач", "к9", "k9"), "k9"),
+    (("серьг",), "serg"),
+    (("скоб",), "skob"),
+    (("ушко", "ушк"), "ushk"),
+    (("звено",), "zven"),
+    (("сталь 18", "сталь18"), "st18"),
+    (("сталь 12", "сталь12"), "st12"),
+    (("гайк", "м20", "m20"), "m20"),
+    (("болт",), "blt"),
+    (("х51", "x51"), "x51"),
+    (("шф20", "шф"), "shf"),
+)
+
+
+_KV10_ROWS: dict[str, tuple[str, dict[str, str], str]] = {
+    "zp1": (
+        "заземляющий проводник ЗП1",
+        {
+            "П20-3Н": "0 м",
+            "УП20-3Н": "0,7 м",
+            "А20-3Н": "1 м",
+            "А20-3Н с РЛК": "1 м",
+            "УА20-3Н": "1,5 м",
+        },
+        "Плюс 4 м на весь объект, даже если на линии одни П20-3Н.",
+    ),
+    "tm63": ("траверса ТМ-63", {"П20-3Н": "1 шт", "УП20-3Н": "нет", "А20-3Н": "нет", "А20-3Н с РЛК": "нет", "УА20-3Н": "нет"}, ""),
+    "tm65": ("траверса ТМ-65", {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "1 шт", "А20-3Н с РЛК": "1 шт", "УА20-3Н": "нет"}, ""),
+    "tm66": ("траверса ТМ-66", {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "1 шт", "А20-3Н с РЛК": "1 шт", "УА20-3Н": "нет"}, ""),
+    "tm67": ("траверса ТМ-67", {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "нет", "А20-3Н с РЛК": "нет", "УА20-3Н": "1 шт"}, ""),
+    "tm68": ("траверса ТМ-68", {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "нет", "А20-3Н с РЛК": "нет", "УА20-3Н": "1 шт"}, ""),
+    "x51": (
+        "хомут Х51",
+        {"П20-3Н": "1 шт", "УП20-3Н": "1 шт", "А20-3Н": "нет", "А20-3Н с РЛК": "нет", "УА20-3Н": "нет"},
+        "Плюс 2 шт на весь объект.",
+    ),
+    "shf": (
+        "изолятор ШФ20УО",
+        {"П20-3Н": "3 шт", "УП20-3Н": "3 шт", "А20-3Н": "1 шт", "А20-3Н с РЛК": "1 шт", "УА20-3Н": "3 шт"},
+        "Плюс 3 шт на весь объект.",
+    ),
+    "pn": (
+        "натяжная подвеска",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "6 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "6 шт"},
+        "Серьга, скоба, ушко, звено и анкерный зажим идут в том же количестве, что и подвеска.",
+    ),
+    "serg": (
+        "серьга",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "6 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "6 шт"},
+        "Столько же, сколько натяжных подвесок.",
+    ),
+    "skob": (
+        "скоба",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "6 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "6 шт"},
+        "Столько же, сколько натяжных подвесок.",
+    ),
+    "nb": (
+        "анкерный зажим",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "6 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "6 шт"},
+        "Столько же, сколько натяжных подвесок.",
+    ),
+    "ushk": (
+        "ушко",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "6 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "6 шт"},
+        "Столько же, сколько натяжных подвесок.",
+    ),
+    "zven": (
+        "звено",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "6 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "6 шт"},
+        "Столько же, сколько натяжных подвесок.",
+    ),
+    "y52": (
+        "крепление подкоса",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "1 шт", "А20-3Н с РЛК": "1 шт", "УА20-3Н": "2 шт"},
+        "",
+    ),
+    "m20": (
+        "гайка М20",
+        {"П20-3Н": "нет", "УП20-3Н": "1 шт", "А20-3Н": "3 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "4 шт"},
+        "Плюс 1 шт на весь объект.",
+    ),
+    "blt": (
+        "болт М20х260",
+        {"П20-3Н": "нет", "УП20-3Н": "нет", "А20-3Н": "2 шт", "А20-3Н с РЛК": "2 шт", "УА20-3Н": "2 шт"},
+        "",
+    ),
+    "sv": (
+        "спиральная вязка",
+        {"П20-3Н": "6 шт", "УП20-3Н": "6 шт", "А20-3Н": "2 шт", "А20-3Н с РЛК": "2 шт", "УА20-3Н": "6 шт"},
+        "Плюс 6 шт на весь объект.",
+    ),
+    "cd10": (
+        "плашечный зажим",
+        {"П20-3Н": "1 шт", "УП20-3Н": "нет", "А20-3Н": "3 шт", "А20-3Н с РЛК": "3 шт", "УА20-3Н": "3 шт"},
+        "Плюс 2 шт на весь объект.",
+    ),
+    "k9": (
+        "колпачок К9",
+        {"П20-3Н": "3 шт", "УП20-3Н": "3 шт", "А20-3Н": "1 шт", "А20-3Н с РЛК": "1 шт", "УА20-3Н": "3 шт"},
+        "Столько же, сколько изоляторов ШФ20УО, включая 3 шт на весь объект.",
+    ),
+    "st12": (
+        "сталь Ø12",
+        {"П20-3Н": "10", "УП20-3Н": "10", "А20-3Н": "10", "А20-3Н с РЛК": "21", "УА20-3Н": "10"},
+        "На опору без разъединителя 10, на опору с РЛК 21.",
+    ),
+    "st18": (
+        "сталь Ø18",
+        {"П20-3Н": "10", "УП20-3Н": "10", "А20-3Н": "10", "А20-3Н с РЛК": "5", "УА20-3Н": "10"},
+        "На опору без разъединителя 10, на опору с РЛК 5.",
+    ),
+}
+
+_ZP6_BY_SUPPORT = {"П23": "0,3 м", "ПП23": "0,3 м", "А23": "0,65 м", "К21": "0,65 м", "УА23*": "1 м"}
+
+
+def _detect_hardware(question: str) -> str | None:
+    found: tuple[int, int, str] | None = None
+    for aliases, item_id in _HARDWARE_ALIASES:
+        for alias in aliases:
+            start = question.find(alias)
+            if start < 0:
+                continue
+            rank = (start, len(alias))
+            if found is None or rank > (found[0], found[1]):
+                found = (start, len(alias), item_id)
+    if found:
+        return found[2]
+    if re.search(r"заземляющ|проводник\s*зп", question):
+        return "zp1" if _question_is_10kv(question) else "zp6"
+    return None
+
+
+def _question_is_10kv(question: str) -> bool:
+    return bool(_detect_support_10(question) or re.search(r"(?<!\d)10\s*кв|10кв", question))
+
+
+def _supports_for(question: str, context: str) -> tuple[str | None, str | None]:
+    support10 = _detect_support_10(question)
+    support04 = _detect_support_04(question)
+    if support10 or support04 or not context:
+        return support10, support04
+    return _detect_support_10(context), _detect_support_04(context)
+
+
+def _join_amounts(amounts: dict[str, str]) -> str:
+    return "; ".join(f"{label} — {qty}" for label, qty in amounts.items())
+
+
+def _kv10_item_text(item_id: str, support10: str | None, support04: str | None) -> str:
+    name, amounts, extra = _KV10_ROWS[item_id]
+    table = f"{name[:1].upper()}{name[1:]}: {_join_amounts(amounts)}."
+    if extra:
+        table = f"{table} {extra}"
+    if support04 and not support10:
+        return (
+            f"На {support04} нет {name}: это арматура 10 кВ, не 0,4 кВ. {table}"
+        )
+    if support10:
+        qty = amounts.get(support10, "нет")
+        if qty == "нет":
+            head = f"На {support10} {name} не ставят."
+        else:
+            head = f"На одну опору {support10} — {qty} ({name})."
+        return f"{head} {table}"
+    return table
+
+
+def _zp6_text(support10: str | None, support04: str | None) -> str:
+    table = f"ЗП6, заземляющий проводник 0,4 кВ: {_join_amounts(_ZP6_BY_SUPPORT)}."
+    if support10:
+        zp1 = _kv10_item_text("zp1", support10, None)
+        return (
+            f"На {support10} ЗП6 нет: так называется проводник только на 0,4 кВ. {table} "
+            f"На 10 кВ проводник называется ЗП1. {zp1}"
+        )
+    if support04:
+        qty = _ZP6_BY_SUPPORT.get(support04, "нет")
+        return (
+            f"На одну опору {support04} — {qty} (ЗП6). {table} "
+            "На 10 кВ этот проводник не применяют. " + _kv10_item_text("zp1", None, None)
+        )
+    return f"{table} На 10 кВ такого проводника нет, там ЗП1. " + _kv10_item_text("zp1", None, None)
+
+
+def _hardware_reply(question: str, context: str) -> str:
+    """Ответ по конкретной позиции. Чужой шифр не подменяется молча комплектом опоры."""
+    support10, support04 = _supports_for(question, context)
+    item = _detect_hardware(question)
+    asks_10 = bool(support10 or re.search(r"(?<!\d)10\s*кв|10кв", question))
+    if item == "zp6" or (item is None and re.search(r"заземляющ", question) and not asks_10):
+        return _zp6_text(support10, support04)
+    if item == "zp1":
+        if support04 and not support10:
+            return (
+                f"На {support04} ЗП1 нет: это проводник 10 кВ. "
+                f"На 0,4 кВ проводник называется ЗП6. {_zp6_text(None, support04)}"
+            )
+        text = _kv10_item_text("zp1", support10, None)
+        return f"ЗП6 на 10 кВ нет. {text}"
+    if re.search(r"плашеч", question) and "cd35" not in question:
+        if asks_10 and not support04:
+            return _kv10_item_text("cd10", support10, None)
+        if support04 or not asks_10:
+            name, per_support, extra = _ARMATURE["cd35"]
+            text = f"{name[:1].upper()}{name[1:]}: {_join_amounts(per_support)}."
+            if extra:
+                text = f"{text} {extra}"
+            if support04:
+                return f"На одну опору {support04} — {per_support.get(support04, 'нет')} ({name}). {text}"
+            return text
+    if item in _KV10_ROWS and item != "zp1":
+        return _kv10_item_text(item, support10, support04)
+    key = _detect_armature(question)
+    if key and support10 and not support04:
+        name, per_support, extra = _ARMATURE[key]
+        text = f"{name[:1].upper()}{name[1:]}: {_join_amounts(per_support)}."
+        if extra:
+            text = f"{text} {extra}"
+        return f"На {support10} позиции «{name}» нет: это арматура 0,4 кВ. {text}"
+    if re.search(r"натяжн|подвеск", question) and asks_10 and "es15" not in question:
+        return _kv10_item_text("pn", support10, support04)
+    if re.search(r"анкерн\w* зажим|зажим анкер", question) and asks_10 and not support04:
+        return _kv10_item_text("nb", support10, None)
+    return ""
+
+
+def _armature_reply(
+    question: str,
+    facts: dict[str, Any],
+    *,
+    has_project: bool,
+    context: str = "",
+) -> str:
+    hardware = _hardware_reply(question, context)
+    if hardware:
+        return hardware
     support10 = _detect_support_10(question)
     topic10 = _detect_topic_10(question)
     asks_materials = bool(re.search(r"арматур|материал|комплект", question))
@@ -1177,8 +1436,11 @@ def _parse_length_m(text: str) -> float | None:
 
 def _layout_estimate_reply(question: str, prior: str, *, has_project: bool) -> str:
     """Считает опоры и заземления на названную длину, даже если вопрос бытовой."""
+    if _detect_hardware(question) or _detect_armature(question):
+        return ""
     if re.search(
-        r"арматур|материал|лент|изолятор|траверс|хомут|подвеск|скреп|кронштейн|зажим|бетон|стойк",
+        r"арматур|материал|лент|изолятор|траверс|хомут|подвеск|скреп|кронштейн|зажим|бетон|стойк|"
+        r"зп|проводник|гайк|болт|спираль|вязк|плашеч|подкос|колпач|серьг",
         question,
     ):
         return ""

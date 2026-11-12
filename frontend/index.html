@@ -4,12 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Автоматизация ТУ</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261112beta" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261112beta2" />
   </head>
   <body data-theme="dark">
-    <div class="beta-ribbon" aria-hidden="true">
-      <span class="beta-ribbon__pill">Beta</span>
-    </div>
     <div class="page-bg" aria-hidden="true">
       <div class="page-bg__photo"></div>
       <div class="page-bg__shimmer"></div>
@@ -26,6 +23,7 @@
           <button class="top-control liquid-control top-control--with-icon" id="openAiEngineerTab" type="button">
             <img class="ui-photo-icon ui-photo-icon--inline" src="/static/icons/luna.jpg" alt="" aria-hidden="true" />
             <span data-i18n="aiEngineerTab">AI Engineer</span>
+            <span class="beta-tag">BETA</span>
           </button>
           <button class="top-control liquid-control" id="openCheckPanel" type="button" data-i18n="checkPanelOpen">Проверка</button>
           <div class="settings-menu liquid-control" id="settingsMenu">
@@ -292,7 +290,10 @@
                   <span data-i18n="aiEngineerTitle">AI Engineer</span>
                 </h2>
               </div>
-              <p class="ai-engineer__badge" id="aiEngineerModeBadge" hidden></p>
+              <div class="ai-engineer__marks">
+                <span class="beta-tag">BETA</span>
+                <p class="ai-engineer__badge" id="aiEngineerModeBadge" hidden></p>
+              </div>
             </div>
 
             <div class="ai-engineer__idle" id="aiEngineerIdle">

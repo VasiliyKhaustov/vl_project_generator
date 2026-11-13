@@ -116,6 +116,19 @@ class DxfSupportRecognitionTests(unittest.TestCase):
         route = [(1000.0, 0.0, 0.0), (1100.0, 0.0, 0.0)]
         self.assertLess(_insert_distance_to_polyline(insert, route), 1.0)
 
+    def test_snapped_insert_counts_even_if_block_outline_is_off_the_line(self) -> None:
+        import ezdxf
+
+        from backend.core.dxf_reader import _insert_distance_to_polyline
+
+        document = ezdxf.new()
+        block = document.blocks.new("Пл_ОпораУА23")
+        # Контур блока в стороне от точки вставки, сама вставка на линии.
+        block.add_lwpolyline([(2, -2), (8, -2), (8, 3), (2, 3)], close=True)
+        insert = document.modelspace().add_blockref("Пл_ОпораУА23", (0, 0))
+        route = [(0.0, 0.0, 0.0), (50.0, 0.0, 0.0)]
+        self.assertEqual(_insert_distance_to_polyline(insert, route), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

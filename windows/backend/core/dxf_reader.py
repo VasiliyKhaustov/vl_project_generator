@@ -426,21 +426,31 @@ def _insert_distance_to_polyline(
     insert: Any,
     route_points: list[tuple[float, float, float]],
 ) -> float:
+    """Ближайшая точка блока к трассе.
+
+    Точка вставки обязательна: у УА23* она стоит на вершине, а контур блока
+    шире и сам по себе может быть дальше допуска 1 м.
+    """
+    samples = [
+        _insert_plan_point(insert),
+        (float(insert.dxf.insert.x), float(insert.dxf.insert.y)),
+    ]
     extents = _insert_extents_xy(insert)
-    if extents is None:
-        return _distance_to_polyline(_insert_plan_point(insert), route_points)
-    (x0, y0), (x1, y1) = extents
-    samples = (
-        (x0, y0),
-        (x1, y0),
-        (x0, y1),
-        (x1, y1),
-        ((x0 + x1) / 2.0, (y0 + y1) / 2.0),
-        ((x0 + x1) / 2.0, y0),
-        ((x0 + x1) / 2.0, y1),
-        (x0, (y0 + y1) / 2.0),
-        (x1, (y0 + y1) / 2.0),
-    )
+    if extents is not None:
+        (x0, y0), (x1, y1) = extents
+        samples.extend(
+            (
+                (x0, y0),
+                (x1, y0),
+                (x0, y1),
+                (x1, y1),
+                ((x0 + x1) / 2.0, (y0 + y1) / 2.0),
+                ((x0 + x1) / 2.0, y0),
+                ((x0 + x1) / 2.0, y1),
+                (x0, (y0 + y1) / 2.0),
+                (x1, (y0 + y1) / 2.0),
+            )
+        )
     return min(_distance_to_polyline(sample, route_points) for sample in samples)
 
 

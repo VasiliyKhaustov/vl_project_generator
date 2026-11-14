@@ -85,6 +85,8 @@ BODY_PARAGRAPH_LEFT_ALIGN_MARKERS = (
 
 CLIMATE_TABLE_SHIFT_Y = -18.0
 CLIMATE_TABLE_FINE_SHIFT_Y = 0.0
+# Таблица на листе «Строительные решения» чуть заходит на абзац сверху.
+CLIMATE_TABLE_CLEARANCE_SHIFT_Y = -7.0
 TITLE_PAGE_YEAR_PARAGRAPH_GAPS = 2
 REFERENCE_DOCS_TABLE_SHIFT_Y = -4.0
 BODY_TEXT_HEIGHT = 3.0
@@ -429,7 +431,7 @@ def _replace_placeholders_in_dxf(
                 replaced_count += count
 
         aligned_tables = _align_adjoining_10kv_tables(document)
-        _move_climate_table_down(document)
+        _move_climate_table_down(document, overlap_shift=False)
         _fix_work_table_support_quantities(document, replacement_map)
 
         # Ни один объект не создаётся и не удаляется: сохраняются те же handles,
@@ -4850,19 +4852,35 @@ def _left_align_equipment_footnote_raw(path: Path) -> None:
         path.write_text(updated, encoding="utf-8")
 
 
-def _move_climate_table_down(document: Any) -> None:
+def _move_climate_table_down(document: Any, *, overlap_shift: bool = True) -> None:
+    climate_handles = _climate_table_block_handles(document) if overlap_shift else set()
     for entity in document.modelspace():
         if entity.dxftype() != "ACAD_TABLE":
             continue
         insert = getattr(entity.dxf, "insert", None)
         if insert is None:
             continue
-        if not 3300 <= insert.x <= 3600:
-            continue
-        if 2020 <= insert.y <= 2045:
-            entity.dxf.insert = (insert.x, insert.y + CLIMATE_TABLE_SHIFT_Y, insert.z)
-        elif 1995 <= insert.y <= 2019:
-            entity.dxf.insert = (insert.x, insert.y + CLIMATE_TABLE_FINE_SHIFT_Y, insert.z)
+        shift = 0.0
+        if 3300 <= insert.x <= 3600 and 2020 <= insert.y <= 2045:
+            shift = CLIMATE_TABLE_SHIFT_Y
+        elif 3300 <= insert.x <= 3600 and 1995 <= insert.y <= 2019:
+            shift = CLIMATE_TABLE_FINE_SHIFT_Y
+        elif overlap_shift and getattr(entity.dxf, "block_record_handle", None) in climate_handles:
+            shift = CLIMATE_TABLE_CLEARANCE_SHIFT_Y
+        if shift:
+            entity.dxf.insert = (insert.x, insert.y + shift, insert.z)
+
+
+def _climate_table_block_handles(document: Any) -> set[str]:
+    handles: set[str] = set()
+    for block in document.blocks:
+        for entity in block:
+            if entity.dxftype() not in {"TEXT", "MTEXT"}:
+                continue
+            if "Район по гололеду" in _plain_mtext(_get_text(entity)):
+                handles.add(block.block_record.dxf.handle)
+                break
+    return handles
 
 
 def _move_climate_table_down_raw(path: Path) -> None:

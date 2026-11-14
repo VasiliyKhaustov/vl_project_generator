@@ -663,10 +663,12 @@ _GARAGE_COOPERATIVE_PATTERNS = (
 )
 
 _APPLICANT_ORGANIZATION_PATTERNS = (
+  (r"\bпубличное\s+акционерное\s+общество\b", "ПАО"),
+  (r"\bпубличное\s+акционерное\s+о\b\.?", "ПАО"),
+  (r"\bпубличное\s+АО\b", "ПАО"),
   (r"\bобщество\s+с\s+ограниченной\s+ответственностью\b", "ООО"),
   (r"\bиндивидуальный\s+предприниматель\b", "ИП"),
   (r"\bакционерное\s+общество\b", "АО"),
-  (r"\bпубличное\s+акционерное\s+общество\b", "ПАО"),
 )
 
 
@@ -704,31 +706,12 @@ def _drop_redundant_urban_district(value: str) -> str:
 def _normalize_address_terms(value: str) -> str:
     has_city_marker = bool(re.search(r"\b(?:г\.|город)\s*[А-ЯЁA-Z]", value, flags=re.IGNORECASE))
     result = _normalize(value)
-    result = re.sub(
-        r"\b([А-ЯЁа-яё-]+?ский)\s+муниципальный\s+район\b",
-        r"\1 район",
-        result,
-        flags=re.IGNORECASE,
-    )
-    result = re.sub(
-        r"\b([А-ЯЁа-яё-]+?ского)\s+муниципального\s+района\b",
-        r"\1 района",
-        result,
-        flags=re.IGNORECASE,
-    )
-    result = re.sub(
-        r"\b([А-ЯЁ][а-яё]+ский)\s+муниципальный\s+округ\b",
-        r"\1 округ",
-        result,
-        flags=re.IGNORECASE,
-    )
-    result = re.sub(
-        r"\b([А-ЯЁа-яё-]+?ского)\s+муниципального\s+округа\b",
-        r"\1 округа",
-        result,
-        flags=re.IGNORECASE,
-    )
-    result = re.sub(r"\bсельское\s+поселение\b", "с.п.", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bмуниципальный\s+район\b", "район", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bмуниципального\s+района\b", "района", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bмуниципальный\s+округ\b", "округ", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bмуниципального\s+округа\b", "округа", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bсельское\s+поселение\b", "с/п", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bсельсовет[аеу]?\b", "с/с", result, flags=re.IGNORECASE)
     replacements = (
         (r"\bгород\s+", "г."),
         (r"\bсело\s+", "с."),
@@ -740,8 +723,8 @@ def _normalize_address_terms(value: str) -> str:
     for pattern, replacement in replacements:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
     result = re.sub(r"\b(г|с|д|п|ул)\.\s+", r"\1.", result, flags=re.IGNORECASE)
-    result = re.sub(r"\bс\.п\.\s+", "с.п. ", result, flags=re.IGNORECASE)
-    result = re.sub(r"\bс\.п\.(?=[А-ЯЁ])", "с.п. ", result)
+    result = re.sub(r"\bс/п(?=[А-ЯЁа-яё])", "с/п ", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bс/с(?=[А-ЯЁа-яё])", "с/с ", result, flags=re.IGNORECASE)
     result = re.sub(r"\bземельный участок\b", "з.у.", result, flags=re.IGNORECASE)
     result = re.sub(r"\s*,\s*", ", ", result)
     if has_city_marker:

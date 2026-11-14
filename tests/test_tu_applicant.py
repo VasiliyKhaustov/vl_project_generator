@@ -13,6 +13,17 @@ class TuApplicantTests(unittest.TestCase):
         )
         self.assertEqual(value, 'ООО «РЕЛ»')
 
+    def test_abbreviates_company_forms(self) -> None:
+        cases = (
+            ('Публичное акционерное общество «Ростелеком»', 'ПАО «Ростелеком»'),
+            ('Публичное АО «Ростелеком»', 'ПАО «Ростелеком»'),
+            ('Публичное Акционерное О «Ростелеком»', 'ПАО «Ростелеком»'),
+            ('Акционерное общество «Липецкэнерго»', 'АО «Липецкэнерго»'),
+            ('Общество с ограниченной ответственностью «РЕЛ»', 'ООО «РЕЛ»'),
+        )
+        for source, expected in cases:
+            self.assertEqual(abbreviate_applicant_display_terms(source), expected)
+
     def test_corporate_tu_extracts_rel_applicant(self) -> None:
         tu_path = Path("output/VsePro/ПСД_48_2026_286/_006 ТУ.pdf")
         if not tu_path.exists():

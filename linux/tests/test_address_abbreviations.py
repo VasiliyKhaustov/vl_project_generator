@@ -43,6 +43,20 @@ class AddressAbbreviationTests(unittest.TestCase):
         self.assertIn("уч.", normalized)
         self.assertNotIn("городской округ", normalized.lower())
 
+    def test_settlement_and_municipal_abbreviations(self) -> None:
+        value = (
+            "Липецкая область, Липецкий муниципальный округ, "
+            "сельское поселение Нижне-Колыбельский сельсовет, "
+            "село Нижнее, улица Речная, дом 5"
+        )
+        normalized = _normalize_address_terms(value)
+        self.assertIn("Липецкий округ", normalized)
+        self.assertNotIn("муниципальный", normalized.lower())
+        self.assertIn("с/п Нижне-Колыбельский с/с", normalized)
+        self.assertIn("с.Нижнее", normalized)
+        self.assertIn("ул.Речная", normalized)
+        self.assertIn("д.5", normalized)
+
 
 class SupportsInstallNoteTableTests(unittest.TestCase):
     def test_fixes_supports_note_in_acad_table(self) -> None:

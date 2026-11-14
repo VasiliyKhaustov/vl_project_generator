@@ -87,6 +87,47 @@ class TuApplicantTests(unittest.TestCase):
         self.assertNotIn("коммутационного аппарата", build_from)
         self.assertNotIn("ТП №", build_from)
 
+    def test_cadastral_quarter_fills_kadnumber_and_missing_stays_blank(self) -> None:
+        from backend.cad.oda_dwg_adapter import _apply_cadastral_mention
+        from backend.core.replacement_builder import build_replacement_map
+        from backend.core.tu_parser import _extract_address, _extract_kad_kind, _extract_kadnumber
+
+        quarter_text = (
+            "антенно-мачтовое сооружение; Липецкая область, Воловский муниципальный округ, "
+            "д. Сапрон, ул. Речная, кадастровый квартал 48:01:1190206."
+        )
+        self.assertEqual(_extract_kadnumber(quarter_text), "48:01:1190206")
+        self.assertEqual(_extract_kad_kind(quarter_text), "quarter")
+        self.assertNotIn("48:01", _extract_address(quarter_text))
+        replacement = build_replacement_map(
+            "ПСД/48/2026/001",
+            {"KADNUMBER": "48:01:1190206", "KAD_KIND": "quarter", "ADRESS": "д. Сапрон"},
+            {},
+        )
+        self.assertEqual(replacement["{{KADNUMBER}}"], "48:01:1190206")
+        titled = "по адресу: д. Сапрон, к/н 48:01:1190206 (2026/76644)"
+        self.assertEqual(
+            _apply_cadastral_mention(titled, replacement),
+            "по адресу: д. Сапрон, к/к 48:01:1190206 (2026/76644)",
+        )
+
+        short_label = "участок к/к 48:01:1190206"
+        self.assertEqual(_extract_kadnumber(short_label), "48:01:1190206")
+
+        parcel = "кадастровый номер 48:20:0011002:28"
+        self.assertEqual(_extract_kadnumber(parcel), "48:20:0011002:28")
+        self.assertEqual(_extract_kad_kind(parcel), "number")
+
+        blank = build_replacement_map("ПСД/48/2026/001", {"ADRESS": "д. Сапрон"}, {})
+        self.assertEqual(blank["{{KADNUMBER}}"], "")
+        self.assertNotIn("не указан", blank["{{KADNUMBER}}"])
+        note = "по адресу: д. Сапрон, к/н (2026/76644). кадастровый номер не указан"
+        cleaned = _apply_cadastral_mention(note, blank)
+        self.assertNotIn("к/н", cleaned)
+        self.assertNotIn("не указан", cleaned)
+        self.assertNotIn("кадастровый", cleaned)
+        self.assertIn("(2026/76644)", cleaned)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,7 +21,6 @@ TU_FIELDS = (
 )
 
 FALLBACK_VALUES = {
-    "KADNUMBER": "не указан",
     "STROIDOM": "объекта",
 }
 
@@ -37,6 +36,12 @@ def build_replacement_map(
 
     for key in TU_FIELDS:
         _add_if_known(replacement_map, f"{{{{{key}}}}}", tu_data.get(key, ""))
+
+    if not str(replacement_map.get("{{KADNUMBER}}", "") or "").strip():
+        replacement_map["{{KADNUMBER}}"] = ""
+    kad_kind = str(tu_data.get("KAD_KIND", "") or "").strip()
+    if kad_kind:
+        replacement_map["{{KAD_KIND}}"] = kad_kind
 
     _add_if_known(replacement_map, "{{ADDRESS}}", tu_data.get("ADRESS", ""))
     _add_if_known(replacement_map, "{{TO_NAME}}", tu_data.get("TP_NAME", ""))
@@ -65,6 +70,9 @@ def _add_if_known(replacement_map: dict[str, str], placeholder: str, value: Any)
     field_name = _placeholder_name(placeholder)
     formatted = _format_value(value, field_name)
     if formatted == "":
+        if field_name == "KADNUMBER":
+            replacement_map[placeholder] = ""
+            return
         fallback = FALLBACK_VALUES.get(field_name, "")
         if fallback:
             replacement_map[placeholder] = fallback

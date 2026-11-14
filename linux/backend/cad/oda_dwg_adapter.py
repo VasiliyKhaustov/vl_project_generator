@@ -1727,6 +1727,7 @@ def _cleanup_generated_text(text: str, replacement_map: dict[str, str] | None = 
     if replacement_map:
         result = _apply_project_number_literal_replacements(result, replacement_map)
         result = _apply_address_literal_replacements(result, replacement_map)
+        result = _apply_cadastral_mention(result, replacement_map)
         result = _apply_contract_number_literal_replacements(result, replacement_map)
         result = _apply_commutator_literal_replacements(result, replacement_map)
         result = _apply_calculated_literal_replacements(result, replacement_map)
@@ -1817,6 +1818,40 @@ def _apply_contract_number_literal_replacements(text: str, replacement_map: dict
         result,
     )
     return result
+
+
+def _apply_cadastral_mention(text: str, replacement_map: dict[str, str]) -> str:
+    """Квартал пишется на месте номера. Если в ТУ нет ни номера, ни квартала — фразу убираем."""
+    kad_number = str(replacement_map.get("{{KADNUMBER}}", "") or "").strip()
+    if kad_number and kad_number.lower() != "не указан":
+        if replacement_map.get("{{KAD_KIND}}") == "quarter":
+            text = re.sub(
+                rf"к\s*/\s*н(?=\s*{re.escape(kad_number)})",
+                "к/к",
+                text,
+                flags=re.IGNORECASE,
+            )
+            text = re.sub(
+                rf"кадастровый\s+номер(?=\s*{re.escape(kad_number)})",
+                "кадастровый квартал",
+                text,
+                flags=re.IGNORECASE,
+            )
+        return text
+
+    text = re.sub(
+        r",?\s*к\s*/\s*н\s*(?:\{\{KADNUMBER\}\}|не\s+указан)?(?=\s*(?:\(|\\P|\}|$))",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r",?\s*кадастровый\s+(?:номер|квартал)\s*(?:\{\{KADNUMBER\}\}|не\s+указан)?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
 
 
 def _apply_address_literal_replacements(text: str, replacement_map: dict[str, str]) -> str:

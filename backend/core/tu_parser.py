@@ -54,6 +54,7 @@ def parse_tu(path: Path) -> tuple[dict[str, Any], list[str]]:
         "APPLICANT": _extract_applicant(text, content.paragraphs),
         "ADRESS": _extract_address(text),
         "KADNUMBER": _extract_kadnumber(text),
+        "KAD_KIND": _extract_kad_kind(text),
         "PROJECTNUMBER": _extract_tu_project_number(text, content.table_cells),
         "DATE": _extract_date(text, content.table_cells),
         "POWER_KW": power_kw,
@@ -282,9 +283,30 @@ def _extract_address(text: str) -> str:
     return ""
 
 
+_PARCEL_NUMBER_RE = re.compile(r"(\d{2}\s*:\s*\d{2}\s*:\s*\d{5,10}\s*:\s*\d+)")
+_CADASTRAL_QUARTER_RE = re.compile(
+    r"(?:кадастровый\s+квартал|к\s*/\s*к)\s*[:\-]?\s*"
+    r"(\d{2}\s*:\s*\d{2}\s*:\s*\d{5,10})(?!\s*:)",
+    re.IGNORECASE,
+)
+
+
 def _extract_kadnumber(text: str) -> str:
-    value = _search(r"(\d{2}\s*:\s*\d{2}\s*:\s*\d{6,10}\s*:\s*\d+)", text)
-    return re.sub(r"\s+", "", value) if value else ""
+    value = _search(_PARCEL_NUMBER_RE.pattern, text)
+    if value:
+        return re.sub(r"\s+", "", value)
+    quarter = _CADASTRAL_QUARTER_RE.search(text or "")
+    if quarter:
+        return re.sub(r"\s+", "", quarter.group(1))
+    return ""
+
+
+def _extract_kad_kind(text: str) -> str:
+    if _search(_PARCEL_NUMBER_RE.pattern, text):
+        return "number"
+    if _CADASTRAL_QUARTER_RE.search(text or ""):
+        return "quarter"
+    return ""
 
 
 def _extract_tu_project_number(text: str, table_cells: list[str]) -> str:
@@ -596,7 +618,7 @@ def _address_from_item(item: str) -> str:
 
 def _cut_address_tail(value: str) -> str:
     result = value
-    for marker in ("кадастровый номер", "к/н", "кадастровый"):
+    for marker in ("кадастровый номер", "кадастровый квартал", "к/н", "к/к", "кадастровый"):
         index = result.lower().find(marker)
         if index >= 0:
             result = result[:index]

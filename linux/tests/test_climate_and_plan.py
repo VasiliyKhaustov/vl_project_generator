@@ -75,6 +75,23 @@ class ClimateDistrictTests(unittest.TestCase):
         self.assertEqual(climate["wind_speed"], 25)
         self.assertEqual(climate["ice_thickness"], 10)
 
+    def test_plan_stamp_overrides_locality(self) -> None:
+        from backend.core.dxf_reader import parse_rku_climate_stamp
+
+        ice_district, wind_district = parse_rku_climate_stamp(
+            "Липецкая область, д. Калинина Дубрава РКУ гололед/ветер- II/I М 1:500"
+        )
+        self.assertEqual((ice_district, wind_district), ("II", "I"))
+        climate = _climate_values(
+            {"ADRESS": "Липецкая область, г. Елец"},
+            {"ice_district": ice_district, "wind_district": wind_district},
+        )
+        self.assertEqual(climate["ice_district"], "II")
+        self.assertEqual(climate["wind_district"], "I")
+        self.assertEqual(climate["ice_thickness"], 15)
+        self.assertEqual(climate["wind_speed"], 25)
+        self.assertEqual(climate["wind_pressure"], 400)
+
 
 class PlanSupportCountTests(unittest.TestCase):
     def test_project_178_excludes_existing_branch_support_off_route(self) -> None:

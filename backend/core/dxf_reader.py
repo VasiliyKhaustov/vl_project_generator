@@ -282,6 +282,7 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
 
     line_length_km = line_length_m / 1000
     a3_sheet_count = count_a3_route_sheets(path)
+    ice_district, wind_district = _climate_districts_from_document(document)
     data = {
         "line_length_m": line_length_m,
         "line_length_km": line_length_km,
@@ -290,11 +291,104 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
         "main_polyline": main_polyline,
         "source_file": path.name,
         "a3_sheet_count": a3_sheet_count,
+        "ice_district": ice_district,
+        "wind_district": wind_district,
     }
     if a3_sheet_count == 0:
         warnings.append("В плане не найдены листы формата А3. Для расчёта количества листов записки принято значение 1.")
         data["a3_sheet_count"] = 1
     return data, warnings
+
+
+_ROMAN_DISTRICT = r"IV|III|II|I"
+_RKU_CLIMATE_RE = re.compile(
+    rf"голол[её]д\s*/\s*ветер.{{0,40}}?({_ROMAN_DISTRICT})\s*/\s*({_ROMAN_DISTRICT})",
+    re.IGNORECASE,
+)
+_ROMAN_GLYPHS = str.maketrans(
+    {
+        "Ⅰ": "I",
+        "Ⅱ": "II",
+        "Ⅲ": "III",
+        "Ⅳ": "IV",
+        "І": "I",
+        "і": "I",
+    }
+)
+
+
+def parse_rku_climate_stamp(text: str) -> tuple[str, str]:
+    """«РКУ гололед/ветер- II/I»: слева район по гололёду, справа район по ветру."""
+    normalized = str(text or "").translate(_ROMAN_GLYPHS)
+    normalized = re.sub(r"\s+", " ", normalized)
+    match = _RKU_CLIMATE_RE.search(normalized)
+    if not match:
+        return "", ""
+    return match.group(1).upper(), match.group(2).upper()
+
+
+def _climate_districts_from_document(document: Any) -> tuple[str, str]:
+    items = _drawing_text_items(document)
+    for _point, text in items:
+        ice_district, wind_district = parse_rku_climate_stamp(text)
+        if ice_district:
+            return ice_district, wind_district
+
+    for point, text in items:
+        lowered = text.casefold()
+        if "голол" not in lowered or "ветер" not in lowered:
+            continue
+        for other_point, other_text in items:
+            if _plan_distance(point, other_point) > 250:
+                continue
+            ice_district, wind_district = parse_rku_climate_stamp(f"{text} {other_text}")
+            if ice_district:
+                return ice_district, wind_district
+    return "", ""
+
+
+def _drawing_text_items(document: Any) -> list[tuple[tuple[float, float], str]]:
+    items: list[tuple[tuple[float, float], str]] = []
+    spaces = [document.modelspace()]
+    for layout in document.layouts:
+        if layout.name.lower() == "model":
+            continue
+        spaces.append(layout)
+    for space in spaces:
+        for entity in space:
+            items.extend(_entity_text_items(entity))
+    return items
+
+
+def _entity_text_items(entity: Any) -> list[tuple[tuple[float, float], str]]:
+    items: list[tuple[tuple[float, float], str]] = []
+    point = _entity_anchor(entity)
+    dxftype = entity.dxftype()
+    if dxftype == "MTEXT":
+        items.append((point, entity.plain_text()))
+    elif dxftype in {"TEXT", "ATTRIB"}:
+        items.append((point, str(getattr(entity.dxf, "text", "") or "")))
+    elif dxftype == "INSERT":
+        for attrib in entity.attribs:
+            items.append((_entity_anchor(attrib), str(getattr(attrib.dxf, "text", "") or "")))
+        try:
+            for child in entity.virtual_entities():
+                if child.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}:
+                    items.extend(_entity_text_items(child))
+        except Exception:
+            return items
+    return [(anchor, text) for anchor, text in items if text.strip()]
+
+
+def _entity_anchor(entity: Any) -> tuple[float, float]:
+    insert = getattr(getattr(entity, "dxf", None), "insert", None)
+    if insert is None:
+        return (0.0, 0.0)
+    return (float(insert.x), float(insert.y))
+
+
+def _plan_distance(left: tuple[float, float], right: tuple[float, float]) -> float:
+    return math.hypot(left[0] - right[0], left[1] - right[1])
 
 
 def count_a3_route_sheets(path: Path) -> int:

@@ -156,7 +156,7 @@ def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> d
     breaker = _breaker_spec(power_kw=tu_data.get("POWER_KW", ""), is_three_phase=is_three_phase, is_single_phase=is_single_phase)
     breaker_current = _breaker_current(breaker)
     komauto = _additional_breaker_spec(breaker)
-    climate = _climate_values(tu_data)
+    climate = _climate_values(tu_data, plan_data)
     a3_sheet_count = int(plan_data.get("a3_sheet_count", 1) or 1)
     sheet_labels = _sheet_labels_from_a3_count(a3_sheet_count)
 
@@ -313,9 +313,10 @@ def _additional_breaker_spec(breaker: str) -> str:
     return f"ВА47-29 3Р {higher}А"
 
 
-def _climate_values(tu_data: dict[str, Any]) -> dict[str, Any]:
-    ice_district = _detect_ice_district(tu_data) or "III"
-    wind_district = _detect_wind_district(tu_data) or "III"
+def _climate_values(tu_data: dict[str, Any], plan_data: dict[str, Any] | None = None) -> dict[str, Any]:
+    plan_data = plan_data or {}
+    ice_district = _roman_climate_district(plan_data.get("ice_district")) or _detect_ice_district(tu_data) or "III"
+    wind_district = _roman_climate_district(plan_data.get("wind_district")) or _detect_wind_district(tu_data) or "III"
     ice_values = CLIMATE_VALUES[ice_district]
     wind_values = CLIMATE_VALUES[wind_district]
     return {
@@ -325,6 +326,13 @@ def _climate_values(tu_data: dict[str, Any]) -> dict[str, Any]:
         "wind_speed": wind_values["wind_speed"],
         "wind_pressure": wind_values["wind_pressure"],
     }
+
+
+def _roman_climate_district(value: Any) -> str:
+    district = str(value or "").strip().upper()
+    if district in CLIMATE_VALUES:
+        return district
+    return ""
 
 
 def _detect_wind_district(tu_data: dict[str, Any]) -> str:

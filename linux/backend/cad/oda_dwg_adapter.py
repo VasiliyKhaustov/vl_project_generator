@@ -84,7 +84,8 @@ BODY_PARAGRAPH_LEFT_ALIGN_MARKERS = (
 )
 
 CLIMATE_TABLE_SHIFT_Y = -18.0
-CLIMATE_TABLE_FINE_SHIFT_Y = 0.0
+# Эта записка уже стоит в «нижней» полосе, прежний сдвиг был 0 и визуально ничего не менял.
+CLIMATE_TABLE_FINE_SHIFT_Y = -16.0
 # Таблица на листе «Строительные решения» чуть заходит на абзац сверху.
 CLIMATE_TABLE_CLEARANCE_SHIFT_Y = -20.0
 TITLE_PAGE_YEAR_PARAGRAPH_GAPS = 2

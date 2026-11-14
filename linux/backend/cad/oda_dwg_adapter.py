@@ -473,6 +473,8 @@ def _replace_placeholders_in_dxf(
         _move_climate_table_down(table_document)
         _fix_work_table_support_quantities(table_document, replacement_map)
         table_document.saveas(output_dxf)
+        # ezdxf не записывает новый insert у ACAD_TABLE, поэтому сдвиг делается в тексте DXF.
+        _move_climate_table_down_raw(output_dxf)
         if logger:
             logger.info(
                 "DXF placeholders replaced in existing entities only: "
@@ -568,6 +570,8 @@ def _replace_placeholders_in_dxf(
     _fix_toc_electro_item_alignment_raw(output_dxf)
     _left_align_equipment_footnote_raw(output_dxf)
     _fix_toc_electro_item_alignment_raw(output_dxf)
+    # ezdxf не записывает новый insert у ACAD_TABLE, поэтому сдвиг делается в тексте DXF.
+    _move_climate_table_down_raw(output_dxf)
     if logger:
         logger.info(f"DXF placeholders replaced: {replaced_count}")
     return replaced_count

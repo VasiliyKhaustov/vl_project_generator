@@ -1921,8 +1921,19 @@ def _apply_calculated_literal_replacements(text: str, replacement_map: dict[str,
         result = re.sub(r"по\s+одной\s+опоре", supports_note, result)
 
     breaker = replacement_map.get("{{BREAKER}}", "")
+    komauto = replacement_map.get("{{komauto}}") or replacement_map.get("{{KOMAUTO}}") or ""
+    sentinel = "\x00KOMAUTO\x00"
+    if komauto:
+        result = result.replace(komauto, sentinel)
     if breaker:
-        result = re.sub(r"ВА47-29\s+[13][PР]\s*\d+\s*[АA]", breaker, result)
+        plain = _plain_mtext(result)
+        if re.fullmatch(r"ВА\s*47-29\s+[13]\s*[PР]\s*\d+\s*[АA]", plain):
+            # В ячейке ведомости модель разорвана кодами шрифта: «ВА}47-29 3{…;Р }32{…;А}».
+            result = breaker
+        else:
+            result = re.sub(r"ВА47-29\s+[13][PР]\s*\d+\s*[АA]", breaker, result)
+    if komauto:
+        result = result.replace(sentinel, komauto)
 
     breaker_current = replacement_map.get("{{BREAKER_CURRENT}}", "")
     if breaker_current:

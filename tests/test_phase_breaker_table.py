@@ -139,6 +139,27 @@ class AdditionalBreakerTests(unittest.TestCase):
         self.assertEqual(materials["BREAKER"], "ВА47-29 1Р 25А")
         self.assertEqual(materials["komauto"], "ВА47-29 3Р 32А")
 
+    def test_volume_cell_breaker_updates_and_komauto_stays_higher(self) -> None:
+        from backend.cad.oda_dwg_adapter import _apply_calculated_literal_replacements
+
+        fragmented = (
+            r"{\fTimes New Roman|b0|i0|c204|p18;ВА}47-29 3"
+            r"{\fTimes New Roman|b0|i0|c204|p18;Р }32"
+            r"{\fTimes New Roman|b0|i0|c204|p18;А}"
+        )
+        replacement_map = {
+            "{{BREAKER}}": "ВА47-29 3Р 16А",
+            "{{komauto}}": "ВА47-29 3Р 25А",
+        }
+        self.assertEqual(
+            _apply_calculated_literal_replacements(fragmented, replacement_map),
+            "ВА47-29 3Р 16А",
+        )
+        self.assertEqual(
+            _apply_calculated_literal_replacements("ВА47-29 3Р 25А", replacement_map),
+            "ВА47-29 3Р 25А",
+        )
+
 
 if __name__ == "__main__":
   unittest.main()

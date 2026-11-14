@@ -129,7 +129,7 @@ class AdditionalBreakerTests(unittest.TestCase):
         self.assertEqual(replacement["{{komauto}}"], "ВА47-29 3Р 40А")
         self.assertEqual(replacement["{{KOMAUTO}}"], "ВА47-29 3Р 40А")
 
-    def test_single_phase_steps_up_within_the_same_poles(self) -> None:
+    def test_single_phase_additional_breaker_is_still_three_pole(self) -> None:
         from backend.core.calculator import calculate_materials
 
         materials = calculate_materials(
@@ -137,7 +137,7 @@ class AdditionalBreakerTests(unittest.TestCase):
             {"supports": {}, "line_length_m": 0, "grounding_count": 0},
         )
         self.assertEqual(materials["BREAKER"], "ВА47-29 1Р 25А")
-        self.assertEqual(materials["komauto"], "ВА47-29 1Р 32А")
+        self.assertEqual(materials["komauto"], "ВА47-29 3Р 32А")
 
 
 if __name__ == "__main__":

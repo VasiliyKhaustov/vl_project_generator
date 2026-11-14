@@ -304,13 +304,13 @@ _BREAKER_LADDER = (5, 8, 10, 16, 25, 32, 40, 50, 63)
 
 
 def _additional_breaker_spec(breaker: str) -> str:
-    """Дополнительный коммутационный аппарат: тот же автомат, на одно деление выше."""
-    match = re.fullmatch(r"(ВА47-29 [13]Р) (\d+)А", (breaker or "").strip())
+    """Дополнительный коммутационный аппарат: всегда 3Р, на одно деление выше основного."""
+    match = re.search(r"(\d+)А\s*$", (breaker or "").strip())
     if not match:
         return ""
-    prefix, current = match.group(1), int(match.group(2))
+    current = int(match.group(1))
     higher = next((step for step in _BREAKER_LADDER if step > current), _BREAKER_LADDER[-1])
-    return f"{prefix} {higher}А"
+    return f"ВА47-29 3Р {higher}А"
 
 
 def _climate_values(tu_data: dict[str, Any]) -> dict[str, Any]:

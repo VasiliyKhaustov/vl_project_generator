@@ -155,6 +155,7 @@ def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> d
     sip4_kg = calculate_sip4_kg(sech_sip4, line_length_km) if sech_sip4 else None
     breaker = _breaker_spec(power_kw=tu_data.get("POWER_KW", ""), is_three_phase=is_three_phase, is_single_phase=is_single_phase)
     breaker_current = _breaker_current(breaker)
+    komauto = _additional_breaker_spec(breaker)
     climate = _climate_values(tu_data)
     a3_sheet_count = int(plan_data.get("a3_sheet_count", 1) or 1)
     sheet_labels = _sheet_labels_from_a3_count(a3_sheet_count)
@@ -181,6 +182,8 @@ def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> d
         "SUPPORTS_INSTALL_NOTE": _supports_install_note(total_supports),
         "BREAKER": breaker,
         "BREAKER_CURRENT": breaker_current,
+        "komauto": komauto,
+        "KOMAUTO": komauto,
         "BREAKER_POLES_TEXT": "трехполюсный" if is_three_phase else "однополюсный" if is_single_phase else "",
         "BREAKER_POLES_TEXT_GENITIVE": "трехполюсного" if is_three_phase else "однополюсного" if is_single_phase else "",
         "ICE_DISTRICT": climate["ice_district"],
@@ -294,6 +297,20 @@ def _breaker_current(spec: str) -> str:
     if not spec:
         return ""
     return spec.rsplit(" ", 1)[-1]
+
+
+# Следующая ступень ВА47-29 после номинала из таблицы мощности.
+_BREAKER_LADDER = (5, 8, 10, 16, 25, 32, 40, 50, 63)
+
+
+def _additional_breaker_spec(breaker: str) -> str:
+    """Дополнительный коммутационный аппарат: тот же автомат, на одно деление выше."""
+    match = re.fullmatch(r"(ВА47-29 [13]Р) (\d+)А", (breaker or "").strip())
+    if not match:
+        return ""
+    prefix, current = match.group(1), int(match.group(2))
+    higher = next((step for step in _BREAKER_LADDER if step > current), _BREAKER_LADDER[-1])
+    return f"{prefix} {higher}А"
 
 
 def _climate_values(tu_data: dict[str, Any]) -> dict[str, Any]:

@@ -114,5 +114,31 @@ class PhaseBreakerTableTests(unittest.TestCase):
     self.assertIn("однополюсный", updated)
 
 
+class AdditionalBreakerTests(unittest.TestCase):
+    def test_fifteen_kw_three_phase_is_one_step_higher(self) -> None:
+        from backend.core.calculator import calculate_materials
+        from backend.core.replacement_builder import build_replacement_map
+
+        materials = calculate_materials(
+            {"POWER_KW": "15", "FAZE": "трехфазный"},
+            {"supports": {}, "line_length_m": 0, "grounding_count": 0},
+        )
+        self.assertEqual(materials["BREAKER"], "ВА47-29 3Р 32А")
+        self.assertEqual(materials["komauto"], "ВА47-29 3Р 40А")
+        replacement = build_replacement_map("ПСД/48/2026/001", {}, materials)
+        self.assertEqual(replacement["{{komauto}}"], "ВА47-29 3Р 40А")
+        self.assertEqual(replacement["{{KOMAUTO}}"], "ВА47-29 3Р 40А")
+
+    def test_single_phase_steps_up_within_the_same_poles(self) -> None:
+        from backend.core.calculator import calculate_materials
+
+        materials = calculate_materials(
+            {"POWER_KW": "5", "FAZE": "однофазный"},
+            {"supports": {}, "line_length_m": 0, "grounding_count": 0},
+        )
+        self.assertEqual(materials["BREAKER"], "ВА47-29 1Р 25А")
+        self.assertEqual(materials["komauto"], "ВА47-29 1Р 32А")
+
+
 if __name__ == "__main__":
   unittest.main()

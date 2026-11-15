@@ -8,6 +8,7 @@ from backend.cad.oda_dwg_adapter import (
     _apply_phase_breaker_replacements_raw,
     _cleanup_raw_dxf_text,
     _format_body_note_text,
+    _integer_cell_text_is_shared,
     _sync_va88_nominal_current_raw,
     _work_table_support_field_for_row,
 )
@@ -191,6 +192,18 @@ class AdditionalBreakerTests(unittest.TestCase):
             "1",
         ]
         self.assertIsNone(_work_table_support_field_for_row(horizontal))
+
+    def test_shared_integer_quantity_is_not_copied_into_other_rows(self) -> None:
+        class Tag:
+            def __init__(self, code: int, value: str) -> None:
+                self.code = code
+                self.value = value
+
+        shared = [Tag(1, "3"), Tag(302, "3"), Tag(1, "3"), Tag(302, "3")]
+        self.assertTrue(_integer_cell_text_is_shared(shared, "3"))
+        unique = [Tag(1, "3"), Tag(302, "3"), Tag(1, "1"), Tag(302, "1")]
+        self.assertFalse(_integer_cell_text_is_shared(unique, "3"))
+        self.assertFalse(_integer_cell_text_is_shared(shared, "0,393"))
 
 
 if __name__ == "__main__":

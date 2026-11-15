@@ -475,6 +475,9 @@ def _replace_placeholders_in_dxf(
         table_document.saveas(output_dxf)
         # ezdxf не записывает новый insert у ACAD_TABLE, поэтому сдвиг делается в тексте DXF.
         _move_climate_table_down_raw(output_dxf)
+        # Соседние строки ведомости затирают общее число «3». Повторяем только
+        # количество монтажа вертикального заземлителя Ø18 L=5 уже после записи.
+        _fix_work_table_support_quantities_raw(output_dxf, replacement_map, only_fields={"185"})
         if logger:
             logger.info(
                 "DXF placeholders replaced in existing entities only: "
@@ -725,6 +728,16 @@ def _numeric_cells_to_right(text_entities: list[Any], marker: Any) -> list[Any]:
     return sorted(candidates, key=lambda entity: entity.dxf.insert.x)
 
 
+def _integer_cell_text_is_shared(table_tags: list[Any], old_text: str) -> bool:
+    """Одинаковое целое стоит в нескольких ячейках: общую замену делать нельзя."""
+    plain = _plain_table_cell_text(old_text)
+    if not re.fullmatch(r"\d+", plain):
+        return False
+    copies = sum(1 for tag in table_tags if tag.code in {1, 302} and tag.value == old_text)
+    # У одной ячейки текст продублирован в group code 1 и 302.
+    return copies > 2
+
+
 def _set_acad_table_cell_text(table: Any, entity: Any, value: str) -> None:
     old_text = _get_text(entity)
     new_text = _replace_table_cell_value(old_text, value)
@@ -732,7 +745,11 @@ def _set_acad_table_cell_text(table: Any, entity: Any, value: str) -> None:
 
     # ACAD_TABLE дублирует значение ячейки в native tags. AutoCAD отображает
     # именно их, а не только MTEXT анонимного блока, поэтому меняем оба дубля.
+    # Если то же целое стоит в других строках, их не трогаем: иначе «3» монтажа
+    # вертикального заземлителя Ø18 L=5 превращается в количество соседней строки.
     table_tags = table.xtags.subclasses[3]
+    if _integer_cell_text_is_shared(table_tags, old_text):
+        return
     for index, tag in enumerate(table_tags):
         if tag.code in {1, 302} and tag.value == old_text:
             table_tags[index] = DXFTag(tag.code, new_text)
@@ -3024,12 +3041,15 @@ def _update_work_table_support_quantities_in_pairs(
     row_count: int,
     col_count: int,
     replacement_map: dict[str, str],
+    only_fields: set[str] | None = None,
 ) -> bool:
     row_texts = _extract_work_table_row_cell_texts(pairs, row_count, col_count)
     cell_targets: dict[tuple[int, int], str] = {}
     for row_index, row_cells in enumerate(row_texts):
         field_name = _work_table_support_field_for_row(row_cells)
         if not field_name:
+            continue
+        if only_fields is not None and field_name not in only_fields:
             continue
         value = _work_table_support_replacement_value(field_name, replacement_map)
         if value == "":
@@ -3064,7 +3084,11 @@ def _update_work_table_support_quantities_in_pairs(
     return changed
 
 
-def _fix_work_table_support_quantities_in_acad_tables_raw(text: str, replacement_map: dict[str, str]) -> str:
+def _fix_work_table_support_quantities_in_acad_tables_raw(
+    text: str,
+    replacement_map: dict[str, str],
+    only_fields: set[str] | None = None,
+) -> str:
     table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
 
     def fix_table(match: re.Match[str]) -> str:
@@ -3081,6 +3105,7 @@ def _fix_work_table_support_quantities_in_acad_tables_raw(text: str, replacement
             row_count,
             col_count,
             replacement_map,
+            only_fields,
         ):
             return table_text
         return _rebuild_dxf_object("ACAD_TABLE", pairs, tail, table_text)
@@ -3701,7 +3726,11 @@ def _strip_table_cell_inline_scales_raw(text: str) -> str:
     return table_pattern.sub(fix_table, text)
 
 
-def _fix_work_table_support_quantities_raw(path: Path, replacement_map: dict[str, str] | None) -> None:
+def _fix_work_table_support_quantities_raw(
+    path: Path,
+    replacement_map: dict[str, str] | None,
+    only_fields: set[str] | None = None,
+) -> None:
     if not replacement_map:
         return
 
@@ -3758,8 +3787,12 @@ def _fix_work_table_support_quantities_raw(path: Path, replacement_map: dict[str
                 break
         return rebuilt
 
-    updated = block_pattern.sub(fix_block, original_text)
-    updated = _fix_work_table_support_quantities_in_acad_tables_raw(updated, replacement_map)
+    updated = original_text if only_fields else block_pattern.sub(fix_block, original_text)
+    updated = _fix_work_table_support_quantities_in_acad_tables_raw(
+        updated,
+        replacement_map,
+        only_fields,
+    )
     if updated != original_text:
         path.write_text(updated, encoding="utf-8")
 

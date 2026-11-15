@@ -1578,6 +1578,31 @@ def _apply_calculated_literal_replacements_table_group_codes_raw(
     return "\n".join(lines) + suffix
 
 
+_VA88_NOMINAL_RE = re.compile(
+    r"ВА88-35\s*3\s*[PР]\s*(\d+)\s*[АA]",
+    re.IGNORECASE,
+)
+_VA88_DESCRIPTION_CURRENT_RE = re.compile(
+    r"((?:Выключатель автоматический трехполюсный|Выключатель автоматический трёхполюсный),\s*)"
+    r"(?:I|І|И)н\s*=\s*\d+\s*[АA]",
+    re.IGNORECASE,
+)
+
+
+def _sync_va88_nominal_current_raw(text: str) -> str:
+    """Ток слева у «Выключатель автоматический трехполюсный» берётся из соседней ячейки ВА88-35."""
+
+    def replace_description(match: re.Match[str]) -> str:
+        start = max(0, match.start() - 2500)
+        end = min(len(text), match.end() + 2500)
+        rating = _VA88_NOMINAL_RE.search(text[start:end])
+        if rating is None:
+            return match.group(0)
+        return f"{match.group(1)}Iн={rating.group(1)}А"
+
+    return _VA88_DESCRIPTION_CURRENT_RE.sub(replace_description, text)
+
+
 def _cleanup_raw_dxf_text(path: Path, replacement_map: dict[str, str] | None = None) -> bool:
     original_text = path.read_text(encoding="utf-8", errors="replace")
     text = original_text
@@ -1600,6 +1625,7 @@ def _cleanup_raw_dxf_text(path: Path, replacement_map: dict[str, str] | None = N
     cleaned_text = _normalize_numeric_result_mtext_heights_raw(cleaned_text, replacement_map)
     if replacement_map:
         cleaned_text = _apply_climate_replacements_raw(cleaned_text, replacement_map)
+    cleaned_text = _sync_va88_nominal_current_raw(cleaned_text)
     if cleaned_text != text:
         path.write_text(cleaned_text, encoding="utf-8")
         return True
@@ -2834,6 +2860,14 @@ def _work_table_computed_field_for_text(text: str) -> str | None:
         "l=10" in joined or "10 м" in joined or "10м" in joined
     ):
         return "H12_10"
+    # Ø18 L=5: 2 монтажа на опору без разъединителя и 1 на опору с РЛК.
+    if (
+        "вертикальн" in joined
+        and "заземл" in joined
+        and "18" in joined
+        and re.search(r"l\s*=\s*5", joined)
+    ):
+        return "185"
     if "монтаж самонесущего изолированного провода" in joined and "несущей" not in joined:
         return "BRANCH_04_KM"
     return None

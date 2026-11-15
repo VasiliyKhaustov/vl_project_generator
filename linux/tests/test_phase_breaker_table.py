@@ -8,6 +8,8 @@ from backend.cad.oda_dwg_adapter import (
     _apply_phase_breaker_replacements_raw,
     _cleanup_raw_dxf_text,
     _format_body_note_text,
+    _sync_va88_nominal_current_raw,
+    _work_table_support_field_for_row,
 )
 
 
@@ -159,6 +161,36 @@ class AdditionalBreakerTests(unittest.TestCase):
             _apply_calculated_literal_replacements("ВА47-29 3Р 25А", replacement_map),
             "ВА47-29 3Р 25А",
         )
+
+    def test_va88_description_takes_nominal_from_the_type_cell(self) -> None:
+        sample = (
+            "ВА88-35 3Р 250А\n"
+            "Выключатель автоматический трехполюсный,  Iн=50А\n"
+            + ("x" * 4000)
+            + "\nВыключатель автоматический трехполюсный,  Iн=32А\n"
+        )
+        updated = _sync_va88_nominal_current_raw(sample)
+        self.assertIn("Выключатель автоматический трехполюсный,  Iн=250А", updated)
+        self.assertIn("Выключатель автоматический трехполюсный,  Iн=32А", updated)
+        self.assertIn("ВА88-35 3Р 250А", updated)
+
+    def test_vertical_ground_18_l5_uses_two_plus_one_count(self) -> None:
+        row = [
+            "7",
+            r"Монтаж вертикального заземлителя {\fArial|b0|i0|c204|p34;%%C}18 мм",
+            "L=5 м",
+            "шт",
+            "1",
+        ]
+        self.assertEqual(_work_table_support_field_for_row(row), "185")
+        horizontal = [
+            "8",
+            r"Монтаж горизонтального заземлителя {\fArial|b0|i0|c204|p34;%%C}12 мм",
+            "L=5 м",
+            "шт",
+            "1",
+        ]
+        self.assertIsNone(_work_table_support_field_for_row(horizontal))
 
 
 if __name__ == "__main__":

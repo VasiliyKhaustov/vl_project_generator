@@ -9,6 +9,8 @@ from backend.cad.oda_dwg_adapter import (
     _cleanup_raw_dxf_text,
     _format_body_note_text,
     _integer_cell_text_is_shared,
+    _move_climate_table_down_raw,
+    _set_reference_docs_row_heights_raw,
     _sync_va88_nominal_current_raw,
     _work_table_support_field_for_row,
 )
@@ -204,6 +206,56 @@ class AdditionalBreakerTests(unittest.TestCase):
         unique = [Tag(1, "3"), Tag(302, "3"), Tag(1, "1"), Tag(302, "1")]
         self.assertFalse(_integer_cell_text_is_shared(unique, "3"))
         self.assertFalse(_integer_cell_text_is_shared(shared, "0,393"))
+
+    def test_10kv_climate_table_is_raised_and_reference_rows_are_8(self) -> None:
+        sample = "\n".join(
+            [
+                "  0",
+                "ACAD_TABLE",
+                " 10",
+                "3710.0",
+                " 20",
+                "3767.0",
+                " 30",
+                "0.0",
+                "  1",
+                "Район по гололеду",
+                "  0",
+                "ENDSEC",
+                "  0",
+                "ACAD_TABLE",
+                " 10",
+                "6077.0",
+                " 20",
+                "3830.0",
+                " 30",
+                "0.0",
+                "141",
+                "16.0",
+                "141",
+                "21.0",
+                "  1",
+                "Обозначение",
+                "  1",
+                "Ссылочные документы",
+                "  1",
+                "Прилагаемые документы",
+                "  0",
+                "ENDSEC",
+                "",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.dxf"
+            path.write_text(sample, encoding="utf-8")
+            _move_climate_table_down_raw(path, outside_band_shift=12.0)
+            _set_reference_docs_row_heights_raw(path)
+            updated = path.read_text(encoding="utf-8")
+        self.assertIn("\n 20\n3779.0\n", updated)
+        self.assertNotIn("\n 20\n3767.0\n", updated)
+        self.assertNotIn("\n141\n16.0\n", updated)
+        self.assertNotIn("\n141\n21.0\n", updated)
+        self.assertGreaterEqual(updated.count("141\n8.0"), 2, updated)
 
 
 if __name__ == "__main__":

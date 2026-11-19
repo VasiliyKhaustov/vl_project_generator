@@ -88,6 +88,9 @@ CLIMATE_TABLE_SHIFT_Y = -18.0
 CLIMATE_TABLE_FINE_SHIFT_Y = -10.0
 # Таблица на листе «Строительные решения» чуть заходит на абзац сверху.
 CLIMATE_TABLE_CLEARANCE_SHIFT_Y = -20.0
+# В записке 10 кВ таблица стоит ниже абзаца и накрывает строку про температуру.
+CLIMATE_TABLE_10KV_SHIFT_Y = 12.0
+REFERENCE_DOCS_ROW_HEIGHT = 8.0
 TITLE_PAGE_YEAR_PARAGRAPH_GAPS = 2
 REFERENCE_DOCS_TABLE_SHIFT_Y = -4.0
 BODY_TEXT_HEIGHT = 3.0
@@ -470,11 +473,15 @@ def _replace_placeholders_in_dxf(
             table_document,
             replacement_map,
         )
-        _move_climate_table_down(table_document)
+        _move_climate_table_down(table_document, overlap_shift=False)
         _fix_work_table_support_quantities(table_document, replacement_map)
         table_document.saveas(output_dxf)
         # ezdxf не записывает новый insert у ACAD_TABLE, поэтому сдвиг делается в тексте DXF.
-        _move_climate_table_down_raw(output_dxf)
+        _move_climate_table_down_raw(
+            output_dxf,
+            outside_band_shift=CLIMATE_TABLE_10KV_SHIFT_Y,
+        )
+        _set_reference_docs_row_heights_raw(output_dxf)
         # Соседние строки ведомости затирают общее число «3». Повторяем только
         # количество монтажа вертикального заземлителя Ø18 L=5 уже после записи.
         _fix_work_table_support_quantities_raw(output_dxf, replacement_map, only_fields={"185"})
@@ -4955,7 +4962,7 @@ def _climate_table_block_handles(document: Any) -> set[str]:
     return handles
 
 
-def _move_climate_table_down_raw(path: Path) -> None:
+def _move_climate_table_down_raw(path: Path, outside_band_shift: float = 0.0) -> None:
     text = path.read_text(encoding="utf-8", errors="replace")
     table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
 
@@ -4976,6 +4983,8 @@ def _move_climate_table_down_raw(path: Path) -> None:
             shift = CLIMATE_TABLE_SHIFT_Y
         elif 3300 <= x <= 3600 and 1995 <= y <= 2019:
             shift = CLIMATE_TABLE_FINE_SHIFT_Y
+        elif outside_band_shift:
+            shift = outside_band_shift
         if not shift:
             return table_text
         new_y = y + shift
@@ -4985,6 +4994,46 @@ def _move_climate_table_down_raw(path: Path) -> None:
     moved_text = table_pattern.sub(fix_table, text)
     if moved_text != text:
         path.write_text(moved_text, encoding="utf-8")
+
+
+def _is_reference_docs_table_text(table_text: str) -> bool:
+    # Текст ячеек лежит в DXF с кодами шрифта, plain_mtext для всей таблицы пустой.
+    return (
+        "Ссылочные документы" in table_text
+        and "Обозначение" in table_text
+        and "Прилагаемые" in table_text
+    )
+
+
+def _set_reference_docs_row_heights_raw(path: Path) -> None:
+    """Строки ведомости ссылочных документов — 8, чтобы таблица не накрывала абзац."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+
+    def fix_table(match: re.Match[str]) -> str:
+        table_text = match.group(1)
+        if not _is_reference_docs_table_text(table_text):
+            return table_text
+        pairs, tail = _split_object_pairs(table_text)
+        changed = False
+        for pair in pairs:
+            if pair[0].strip() != "141":
+                continue
+            try:
+                current = float(pair[1])
+            except ValueError:
+                continue
+            if abs(current - REFERENCE_DOCS_ROW_HEIGHT) < 0.001:
+                continue
+            pair[1] = f"{REFERENCE_DOCS_ROW_HEIGHT:.1f}"
+            changed = True
+        if not changed:
+            return table_text
+        return _rebuild_dxf_object("ACAD_TABLE", pairs, tail, table_text)
+
+    updated = table_pattern.sub(fix_table, text)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
 
 
 def _move_reference_docs_table_down(document: Any) -> None:

@@ -691,7 +691,41 @@ def abbreviate_address_display_terms(value: str) -> str:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
     result = re.sub(r"\bучасток\b", "уч.", result, flags=re.IGNORECASE)
     result = _drop_redundant_urban_district(result)
+    result = _abbreviate_settlement_admin_terms(result)
     return re.sub(r"\s+", " ", result).strip()
+
+
+def _abbreviate_settlement_admin_terms(value: str) -> str:
+    """Сокращения административных единиц в адресе для любой записки."""
+    result = value
+    result = re.sub(
+        r"\bгородск(?:ое|ого)\s+поселени[ея]\b",
+        "г/п",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(r"\bсельское\s+поселение\b", "с/п", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bсельсовет[аеу]?\b", "с/с", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bгород\s+", "г.", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bг\.\s+", "г.", result, flags=re.IGNORECASE)
+    district_name = r"([А-ЯЁа-яё][А-ЯЁа-яё-]*)"
+    district_abbr = r"р\s*[.\-]\s*н\.?"
+    result = re.sub(
+        rf"\b{district_abbr}\s+{district_name}\b",
+        r"\1 район",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(
+        rf"\b{district_name}\s+{district_abbr}\b",
+        r"\1 район",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(r"\bг/п(?=[А-ЯЁа-яё])", "г/п ", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bс/п(?=[А-ЯЁа-яё])", "с/п ", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bс/с(?=[А-ЯЁа-яё])", "с/с ", result, flags=re.IGNORECASE)
+    return result
 
 
 def _drop_redundant_urban_district(value: str) -> str:

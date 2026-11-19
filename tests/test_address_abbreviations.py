@@ -57,6 +57,25 @@ class AddressAbbreviationTests(unittest.TestCase):
         self.assertIn("ул.Речная", normalized)
         self.assertIn("д.5", normalized)
 
+    def test_urban_settlement_district_and_selsovet(self) -> None:
+        value = (
+            "Липецкая область, р-н Задонский, городское поселение город Задонск, "
+            "с/п Задонский сельсовет"
+        )
+        normalized = abbreviate_address_display_terms(value)
+        self.assertIn("Задонский район", normalized)
+        self.assertNotIn("р-н", normalized.lower())
+        self.assertIn("г/п г.Задонск", normalized)
+        self.assertNotIn("городское поселение", normalized.lower())
+        self.assertIn("с/п Задонский с/с", normalized)
+        self.assertNotIn("сельсовет", normalized.lower())
+
+    def test_normalized_tu_address_keeps_the_same_admin_abbreviations(self) -> None:
+        value = "Липецкая область, р-н Задонский, городское поселение город Задонск"
+        normalized = _normalize_address_terms(value)
+        self.assertIn("Задонский район", normalized)
+        self.assertIn("г/п г.Задонск", normalized)
+
 
 class SupportsInstallNoteTableTests(unittest.TestCase):
     def test_fixes_supports_note_in_acad_table(self) -> None:

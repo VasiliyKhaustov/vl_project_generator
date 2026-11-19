@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -108,6 +109,14 @@ CLIMATE_VALUES = {
 }
 
 
+def round_line_length_m(value: float) -> int:
+    """Длина линии 0,4 кВ до целых метров: 357,75 → 358, 298,12 → 298, 134,5 → 135."""
+    length = float(value or 0)
+    if length <= 0:
+        return 0
+    return int(math.floor(length + 0.5))
+
+
 def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> dict[str, Any]:
     supports = plan_data.get("supports", {})
     p23_regular = int(supports.get("P23", 0) or 0)
@@ -118,8 +127,13 @@ def calculate_materials(tu_data: dict[str, Any], plan_data: dict[str, Any]) -> d
     k21 = int(supports.get("K21", 0) or 0)
     ground = int(plan_data.get("grounding_count", 0) or 0)
 
-    line_length_m = float(plan_data.get("line_length_m", 0) or 0)
-    line_length_km = float(plan_data.get("line_length_km", line_length_m / 1000) or 0)
+    raw_line_length_m = float(plan_data.get("line_length_m", 0) or 0)
+    if raw_line_length_m:
+        line_length_m = round_line_length_m(raw_line_length_m)
+        line_length_km = line_length_m / 1000
+    else:
+        line_length_m = 0
+        line_length_km = float(plan_data.get("line_length_km", 0) or 0)
     phase = str(tu_data.get("FAZE", "")).lower()
     cable_section = str(tu_data.get("SECH_KABEL", ""))
     wire_weight_per_km = tu_data.get("wire_weight_final")

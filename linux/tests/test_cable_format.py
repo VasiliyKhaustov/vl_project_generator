@@ -9,7 +9,7 @@ from backend.core.cable_format import (
     format_sip4_spec_table_kg,
     sip4_weight_per_km,
 )
-from backend.core.calculator import calculate_materials
+from backend.core.calculator import calculate_materials, round_line_length_m
 from backend.core.replacement_builder import build_replacement_map
 
 
@@ -34,6 +34,22 @@ class CableFormatTests(unittest.TestCase):
         self.assertEqual(calculate_sip4_spec_table_kg("4х16"), 0.5)
         self.assertEqual(format_sip4_spec_table_kg("2х16"), "0.3")
         self.assertEqual(format_sip4_spec_table_kg("4х16"), "0.5")
+
+
+class LineLengthRoundingTests(unittest.TestCase):
+    def test_rounds_half_up_from_the_line_property(self) -> None:
+        self.assertEqual(round_line_length_m(357.75), 358)
+        self.assertEqual(round_line_length_m(298.12), 298)
+        self.assertEqual(round_line_length_m(134.5), 135)
+
+    def test_materials_use_rounded_meters(self) -> None:
+        materials = calculate_materials(
+            {},
+            {"line_length_m": 357.75, "line_length_km": 0.35775, "supports": {}, "grounding_count": 0},
+        )
+        self.assertEqual(materials["LINE_LENGTH_M"], 358)
+        self.assertEqual(materials["LINE_LENGTH_KM"], 0.358)
+        self.assertEqual(materials["SQUARE"], 1432)
 
 
 class Pp23MaterialsTests(unittest.TestCase):

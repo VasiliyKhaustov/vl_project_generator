@@ -871,7 +871,8 @@ def _find_main_polyline(
         if geometry_length <= 0:
             continue
         dimension_length = _dimension_chain_length_for_polyline(modelspace, points, polyline.dxf.layer, geometry_length)
-        length = dimension_length["length"] if dimension_length else geometry_length
+        # В записку идёт свойство Length полилинии, а не сумма размерных цепочек.
+        length = geometry_length
         nearby_supports = 0
         if support_points:
             tolerance = _support_distance_tolerance(length)
@@ -900,10 +901,7 @@ def _find_main_polyline(
     pool = electrical or candidates
     selected = max(pool, key=lambda item: (item["nearby_supports"], item["length"]))
     selected["candidates"] = len(pool)
-    if selected.get("dimension_length") is not None:
-        selected["selection_rule"] = "dimension_chain_on_electrical_polyline" if electrical else "dimension_chain_on_polyline"
-    else:
-        selected["selection_rule"] = "longest_open_lwpolyline_on_electrical_layer" if electrical else "longest_open_lwpolyline"
+    selected["selection_rule"] = "polyline_length_property_on_electrical_layer" if electrical else "polyline_length_property"
     return selected
 
 

@@ -51,6 +51,22 @@ class LineLengthRoundingTests(unittest.TestCase):
         self.assertEqual(materials["LINE_LENGTH_KM"], 0.358)
         self.assertEqual(materials["SQUARE"], 1432)
 
+    def test_548_6416_is_549_meters_and_0_549_km(self) -> None:
+        materials = calculate_materials(
+            {},
+            {
+                "line_length_m": 548.6416459843848,
+                "line_length_km": 0.55,
+                "supports": {},
+                "grounding_count": 0,
+            },
+        )
+        replacement = build_replacement_map("ПСД/48/2026/301", {}, materials)
+        self.assertEqual(materials["LINE_LENGTH_M"], 549)
+        self.assertEqual(materials["LINE_LENGTH_KM"], 0.549)
+        self.assertEqual(replacement["{{LINE_LENGTH_M}}"], "549")
+        self.assertEqual(replacement["{{LINE_LENGTH_KM}}"], "0.549")
+
 
 class Pp23MaterialsTests(unittest.TestCase):
     def test_pp23_uses_p23_armature_and_sv110_poles(self) -> None:

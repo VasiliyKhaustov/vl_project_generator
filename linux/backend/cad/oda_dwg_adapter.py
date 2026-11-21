@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 import ezdxf
+from ezdxf import bbox
+from ezdxf.addons import MTextExplode
 from ezdxf.lldxf.types import DXFTag, DXFVertex
+from ezdxf.math import Matrix44
 
 from backend.core.cable_format import format_sip4_spec_table_kg
 from backend.core.file_utils import copy_file_with_retry, local_scratch_dir
@@ -88,9 +91,26 @@ CLIMATE_TABLE_SHIFT_Y = -18.0
 CLIMATE_TABLE_FINE_SHIFT_Y = -10.0
 # Таблица на листе «Строительные решения» чуть заходит на абзац сверху.
 CLIMATE_TABLE_CLEARANCE_SHIFT_Y = -20.0
-# В записке 10 кВ таблица стоит ниже абзаца и накрывает строку про температуру.
-CLIMATE_TABLE_10KV_SHIFT_Y = 12.0
-REFERENCE_DOCS_ROW_HEIGHT = 8.0
+# Схема КТП 10 кВ и её таблицы чуть заходят на штамп. Выше рамки листа места мало.
+KTP_SCHEME_LIFT_Y = 7.0
+# После выравнивания по центру зазора таблица всё ещё накрывает абзац сверху.
+CLIMATE_TABLE_10KV_DROP_Y = 12.0
+# Ведомость ссылочных документов, комплектов чертежей и основные показатели: строки по 6.
+REFERENCE_DOCS_ROW_HEIGHT = 6.0
+# Обе ведомости на листе чуть опускаются, но не доезжают до абзаца снизу.
+SHEET_REGISTER_DROP_Y = 8.0
+SHEET_REGISTER_TEXT_GAP = 6.0
+# Ведомости отвода земли (таблицы 7 и 8): все строки по 8, таблицы вплотную.
+LAND_ALLOCATION_ROW_HEIGHT = 8.0
+# Низ таблицы 8 садится на верхнюю линию штампа, на толщину линии выше, без зазора и без наезда.
+LAND_ALLOCATION_STAMP_GAP = 2.0
+# Таблицы 7 и 8 стыкуются одной линией: без просвета и без наезда.
+LAND_ALLOCATION_TABLE_GAP = 0.0
+# Первая строка ведомости опор в AutoCAD выше 8, и без этого сдвига её низ заходит на таблицу 8 ровно на одну строку.
+LAND_ALLOCATION_UPPER_LIFT = 8.0
+# Если штамп не найден, верх таблицы 7 не подъезжает к абзацу ближе этого зазора.
+LAND_ALLOCATION_TEXT_GAP = 28.0
+LAND_ALLOCATION_TEXT_LOOKAHEAD = 120.0
 TITLE_PAGE_YEAR_PARAGRAPH_GAPS = 2
 REFERENCE_DOCS_TABLE_SHIFT_Y = -4.0
 BODY_TEXT_HEIGHT = 3.0
@@ -474,14 +494,18 @@ def _replace_placeholders_in_dxf(
             replacement_map,
         )
         _move_climate_table_down(table_document, overlap_shift=False)
+        scheme_anchors = _ktp_scheme_anchors(table_document)
+        _raise_10kv_ktp_schemes(table_document, scheme_anchors)
         _fix_work_table_support_quantities(table_document, replacement_map)
+        _compress_land_allocation_blocks(table_document)
+        _compress_summary_table_blocks(table_document)
         table_document.saveas(output_dxf)
         # ezdxf не записывает новый insert у ACAD_TABLE, поэтому сдвиг делается в тексте DXF.
-        _move_climate_table_down_raw(
-            output_dxf,
-            outside_band_shift=CLIMATE_TABLE_10KV_SHIFT_Y,
-        )
+        _place_10kv_climate_table_raw(output_dxf)
+        _raise_10kv_ktp_scheme_tables_raw(output_dxf, scheme_anchors)
         _set_reference_docs_row_heights_raw(output_dxf)
+        _lower_sheet_register_tables_raw(output_dxf)
+        _place_land_allocation_tables_raw(output_dxf)
         # Соседние строки ведомости затирают общее число «3». Повторяем только
         # количество монтажа вертикального заземлителя Ø18 L=5 уже после записи.
         _fix_work_table_support_quantities_raw(output_dxf, replacement_map, only_fields={"185"})
@@ -4931,6 +4955,205 @@ def _left_align_equipment_footnote_raw(path: Path) -> None:
         path.write_text(updated, encoding="utf-8")
 
 
+def _centered_table_top(
+    upper_baseline: float,
+    lower_baseline: float,
+    lower_text_height: float,
+    table_height: float,
+) -> float:
+    """Верх таблицы ровно между нижней границей верхнего текста и верхом нижнего."""
+    lower_top = lower_baseline + lower_text_height
+    space = upper_baseline - lower_top
+    if space <= table_height:
+        top = lower_top + table_height
+    else:
+        top = (upper_baseline + lower_top + table_height) / 2
+    return top - CLIMATE_TABLE_10KV_DROP_Y
+
+
+def _climate_table_height(table_text: str) -> float:
+    heights = [float(value) for value in re.findall(r"\n141\n([-+]?\d+(?:\.\d+)?)", table_text)]
+    return sum(heights)
+
+
+def _place_10kv_climate_table_raw(path: Path) -> None:
+    """Ставит климатическую таблицу 10 кВ в зазор между абзацами, без наезда на текст."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+    tables: list[dict[str, float]] = []
+    for match in table_pattern.finditer(text):
+        table_text = match.group(1)
+        if not _is_climate_table_text(table_text):
+            continue
+        coords = re.search(
+            r" 10\n([-+]?\d+(?:\.\d+)?)\n 20\n([-+]?\d+(?:\.\d+)?)(\n 30\n)",
+            table_text,
+        )
+        if not coords:
+            continue
+        x = float(coords.group(1))
+        y = float(coords.group(2))
+        if 3300 <= x <= 3600:
+            continue
+        height = _climate_table_height(table_text)
+        if height <= 0:
+            continue
+        tables.append({"x": x, "y": y, "height": height, "span": match.span()})
+    if not tables:
+        return
+
+    document = ezdxf.readfile(path)
+    lines_by_table: list[tuple[float, float, float]] = []
+    for table in tables:
+        bounds = _climate_neighbor_lines(document, table["x"])
+        if bounds is None:
+            lines_by_table.append((0.0, 0.0, 0.0))
+        else:
+            lines_by_table.append(bounds)
+
+    updated = text
+    for table, bounds in zip(reversed(tables), reversed(lines_by_table)):
+        upper_baseline, lower_baseline, lower_height = bounds
+        if lower_height <= 0:
+            continue
+        target_top = _centered_table_top(
+            upper_baseline,
+            lower_baseline,
+            lower_height,
+            table["height"],
+        )
+        if abs(target_top - table["y"]) < 0.05:
+            continue
+        start, end = (int(table["span"][0]), int(table["span"][1]))
+        chunk = updated[start:end]
+        coords = re.search(
+            r" 10\n([-+]?\d+(?:\.\d+)?)\n 20\n([-+]?\d+(?:\.\d+)?)(\n 30\n)",
+            chunk,
+        )
+        if not coords:
+            continue
+        replacement = f" 10\n{coords.group(1)}\n 20\n{target_top:.4f}{coords.group(3)}"
+        updated = updated[:start] + chunk.replace(coords.group(0), replacement, 1) + updated[end:]
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+
+
+def _climate_neighbor_lines(
+    document: Any,
+    table_x: float,
+) -> tuple[float, float, float] | None:
+    source = None
+    for entity in document.modelspace().query("MTEXT"):
+        raw = entity.text or ""
+        if "Температура воздуха" not in raw:
+            continue
+        insert = entity.dxf.insert
+        width = float(getattr(entity.dxf, "width", 0) or 0)
+        if insert.x - 5 <= table_x <= insert.x + width + 5:
+            source = entity
+            break
+    if source is None:
+        return None
+
+    holder = document.blocks.new(f"TMP_CLIMATE_{int(table_x)}")
+    MTextExplode(holder).explode(source)
+    candidates: list[tuple[float, float, str]] = []
+    for entity in holder.query("TEXT"):
+        value = str(entity.dxf.text or "")
+        # Только фрагменты над и под самой таблицей, без соседней колонки справа.
+        if not (table_x - 5 <= entity.dxf.insert.x <= table_x + 170):
+            continue
+        candidates.append((float(entity.dxf.insert.y), float(entity.dxf.height or 0), value))
+    lower = None
+    for baseline, height, value in candidates:
+        if "Температура" not in value:
+            continue
+        if lower is None or baseline > lower[0]:
+            lower = (baseline, height)
+    if lower is None:
+        return None
+    upper = None
+    for baseline, height, _value in candidates:
+        if baseline <= lower[0] + 1:
+            continue
+        if upper is None or baseline < upper[0]:
+            upper = (baseline, height)
+    if upper is None:
+        return None
+    return upper[0], lower[0], lower[1]
+
+
+def _ktp_scheme_anchors(document: Any) -> list[tuple[float, float]]:
+    anchors: list[tuple[float, float]] = []
+    for entity in document.modelspace().query("TEXT"):
+        if str(entity.dxf.text or "").strip() != "10 кВ":
+            continue
+        if entity.dxf.insert.y < 3800:
+            continue
+        anchors.append((float(entity.dxf.insert.x), float(entity.dxf.insert.y)))
+    return anchors
+
+
+def _raise_10kv_ktp_schemes(document: Any, anchors: list[tuple[float, float]]) -> None:
+    """Поднимает рисунок схемы КТП над штампом. Сам штамп и рамку не двигает."""
+    if not anchors:
+        return
+    cache = bbox.Cache()
+    matrix = Matrix44.translate(0, KTP_SCHEME_LIFT_Y, 0)
+    for entity in document.modelspace():
+        if entity.dxftype() == "ACAD_TABLE":
+            continue
+        try:
+            box = bbox.extents([entity], cache=cache)
+        except Exception:
+            continue
+        if box.extmax.y - box.extmin.y > 100:
+            continue
+        center_x = (box.extmin.x + box.extmax.x) / 2
+        for anchor_x, anchor_y in anchors:
+            if not (anchor_x - 90 <= center_x <= anchor_x + 370):
+                continue
+            if box.extmin.y < anchor_y - 216 or box.extmax.y > anchor_y + 16:
+                continue
+            try:
+                entity.transform(matrix)
+            except Exception:
+                pass
+            break
+
+
+def _raise_10kv_ktp_scheme_tables_raw(path: Path, anchors: list[tuple[float, float]]) -> None:
+    if not anchors:
+        return
+    text = path.read_text(encoding="utf-8", errors="replace")
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+
+    def lift(match: re.Match[str]) -> str:
+        table_text = match.group(1)
+        coords = re.search(
+            r" 10\n([-+]?\d+(?:\.\d+)?)\n 20\n([-+]?\d+(?:\.\d+)?)(\n 30\n)",
+            table_text,
+        )
+        if not coords:
+            return table_text
+        x = float(coords.group(1))
+        y = float(coords.group(2))
+        for anchor_x, anchor_y in anchors:
+            if not (anchor_x - 90 <= x <= anchor_x + 370):
+                continue
+            # Верхняя спецификация уже у рамки листа. Поднимаем только нижнюю таблицу.
+            if not (anchor_y - 220 <= y <= anchor_y - 80):
+                continue
+            new_y = y + KTP_SCHEME_LIFT_Y
+            replacement = f" 10\n{coords.group(1)}\n 20\n{new_y:.4f}{coords.group(3)}"
+            return table_text.replace(coords.group(0), replacement, 1)
+        return table_text
+
+    updated = table_pattern.sub(lift, text)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+
+
 def _move_climate_table_down(document: Any, *, overlap_shift: bool = True) -> None:
     climate_handles = _climate_table_block_handles(document) if overlap_shift else set()
     for entity in document.modelspace():
@@ -4998,6 +5221,11 @@ def _move_climate_table_down_raw(path: Path, outside_band_shift: float = 0.0) ->
 
 def _is_reference_docs_table_text(table_text: str) -> bool:
     # Текст ячеек лежит в DXF с кодами шрифта, plain_mtext для всей таблицы пустой.
+    # Верхняя ведомость на листе подписана «ссылочных и прилагаемых», без фразы «Ссылочные документы».
+    if "Ведомость ссылочных" in table_text or "ссылочных и прилагаемых" in table_text:
+        return True
+    if "основных комплектов" in table_text.casefold():
+        return True
     return (
         "Ссылочные документы" in table_text
         and "Обозначение" in table_text
@@ -5005,14 +5233,412 @@ def _is_reference_docs_table_text(table_text: str) -> bool:
     )
 
 
+def _is_land_allocation_table_text(table_text: str) -> str | None:
+    if "отвода земли" not in table_text:
+        return None
+    if "под опоры" in table_text:
+        return "upper"
+    if "КТП" in table_text:
+        return "lower"
+    return None
+
+
+def _land_allocation_tops(
+    stamp_top: float | None,
+    upper_rows: int,
+    lower_rows: int,
+    text_baseline: float | None,
+    current_top: float,
+) -> tuple[float, float]:
+    """Верх таблицы 7 и верх таблицы 8. Они стыкуются, низ таблицы 8 на линии штампа."""
+    upper_height = upper_rows * LAND_ALLOCATION_ROW_HEIGHT
+    lower_height = lower_rows * LAND_ALLOCATION_ROW_HEIGHT
+    if stamp_top is None:
+        top = current_top
+        if text_baseline is not None:
+            top = min(top, text_baseline - LAND_ALLOCATION_TEXT_GAP)
+        return top, top - upper_height - LAND_ALLOCATION_TABLE_GAP
+    lower_bottom = stamp_top + LAND_ALLOCATION_STAMP_GAP
+    lower_top = lower_bottom + lower_height
+    top = lower_top + LAND_ALLOCATION_TABLE_GAP + upper_height + LAND_ALLOCATION_UPPER_LIFT
+    if text_baseline is not None and top > text_baseline - 8:
+        top = text_baseline - 8.0
+    return top, lower_top
+
+
+def _stamp_line_below_table(document: Any, table_x: float) -> float | None:
+    """Верхняя линия штампа под ведомостью: самая высокая горизонталь в зоне штампа."""
+    best: float | None = None
+    for line in document.modelspace().query("LINE"):
+        start = line.dxf.start
+        end = line.dxf.end
+        if abs(start.y - end.y) > 0.4:
+            continue
+        y = float(start.y)
+        if not (3580.0 <= y <= 3690.0):
+            continue
+        x0, x1 = sorted((float(start.x), float(end.x)))
+        if x1 - x0 < 100:
+            continue
+        if x1 < table_x + 20 or x0 > table_x + 165:
+            continue
+        if best is None or y > best:
+            best = y
+    return best
+
+
+def _table_block_text(block: Any) -> str:
+    parts: list[str] = []
+    for entity in block:
+        if entity.dxftype() == "MTEXT":
+            parts.append(entity.text or "")
+    return "\n".join(parts)
+
+
+def _row_boundaries(block: Any) -> list[float]:
+    levels: set[float] = set()
+    for entity in block:
+        if entity.dxftype() != "LINE":
+            continue
+        start = entity.dxf.start
+        end = entity.dxf.end
+        if abs(start.y - end.y) > 0.05:
+            continue
+        if abs(start.x - end.x) < 20:
+            continue
+        levels.add(round(float(start.y), 2))
+    if not levels:
+        return []
+    ordered = sorted(levels, reverse=True)
+    top = ordered[0]
+    return [round(value - top, 4) for value in ordered]
+
+
+def _map_row_y(y: float, boundaries: list[float], row_height: float) -> float:
+    shifted = [value - boundaries[0] for value in boundaries]
+    local = y - boundaries[0]
+    for index in range(len(shifted) - 1):
+        top = shifted[index]
+        bottom = shifted[index + 1]
+        if local > top + 0.15 or local < bottom - 0.15:
+            continue
+        new_top = -index * row_height
+        new_bottom = new_top - row_height
+        if abs(local - top) <= 0.15:
+            return boundaries[0] + new_top
+        if abs(local - bottom) <= 0.15:
+            return boundaries[0] + new_bottom
+        span = top - bottom
+        if span <= 0:
+            return boundaries[0] + new_top
+        ratio = (top - local) / span
+        return boundaries[0] + new_top - ratio * row_height
+    return y
+
+
+def _compress_table_block_rows(block: Any, row_height: float) -> None:
+    boundaries = _row_boundaries(block)
+    if len(boundaries) < 3:
+        return
+    expected = [round(-index * row_height, 4) for index in range(len(boundaries))]
+    current = [round(value - boundaries[0], 4) for value in boundaries]
+    if all(abs(left - right) < 0.05 for left, right in zip(current, expected)):
+        return
+    for entity in block:
+        if entity.dxftype() == "LINE":
+            start = entity.dxf.start
+            end = entity.dxf.end
+            entity.dxf.start = (start.x, _map_row_y(float(start.y), boundaries, row_height), start.z)
+            entity.dxf.end = (end.x, _map_row_y(float(end.y), boundaries, row_height), end.z)
+        elif entity.dxftype() == "MTEXT":
+            insert = entity.dxf.insert
+            entity.dxf.insert = (insert.x, _map_row_y(float(insert.y), boundaries, row_height), insert.z)
+
+
+def _compress_land_allocation_blocks(document: Any) -> None:
+    """Рисует строки ведомостей отвода земли высотой 8. Иначе AutoCAD оставляет старую геометрию."""
+    blocks = {block.block_record.dxf.handle: block for block in document.blocks}
+    for table in document.modelspace().query("ACAD_TABLE"):
+        block = blocks.get(getattr(table.dxf, "block_record_handle", None))
+        if block is None:
+            continue
+        text = _table_block_text(block)
+        if "отвода земли" not in text:
+            continue
+        if "под опоры" not in text and "КТП" not in text:
+            continue
+        _compress_table_block_rows(block, LAND_ALLOCATION_ROW_HEIGHT)
+
+
+def _is_summary_sheet_table_text(text: str) -> bool:
+    folded = text.casefold()
+    if "ведомость ссылочных" in folded and "прилагаем" in folded:
+        return True
+    if "основных комплектов" in folded:
+        return True
+    return "основные показатели" in folded
+
+
+def _compress_summary_table_blocks(document: Any) -> None:
+    """Строки ведомости ссылочных документов и основных показателей — 6."""
+    blocks = {block.block_record.dxf.handle: block for block in document.blocks}
+    for table in document.modelspace().query("ACAD_TABLE"):
+        block = blocks.get(getattr(table.dxf, "block_record_handle", None))
+        if block is None:
+            continue
+        if not _is_summary_sheet_table_text(_table_block_text(block)):
+            continue
+        _compress_table_block_rows(block, REFERENCE_DOCS_ROW_HEIGHT)
+
+
+def _land_text_baseline_above(
+    document: Any,
+    table_x: float,
+    table_top: float,
+) -> float | None:
+    """Ближайшая строка абзаца над таблицей, в пределах её ширины."""
+    baselines: list[float] = []
+    exploded = 0
+    for entity in document.modelspace().query("MTEXT"):
+        insert = entity.dxf.insert
+        width = float(getattr(entity.dxf, "width", 0) or 0)
+        if not (insert.x - 5 <= table_x <= insert.x + width + 5):
+            continue
+        holder = document.blocks.new(f"TMP_LAND_{int(table_x)}_{exploded}")
+        exploded += 1
+        MTextExplode(holder).explode(entity)
+        for text in holder.query("TEXT"):
+            x = float(text.dxf.insert.x)
+            y = float(text.dxf.insert.y)
+            if not (table_x - 5 <= x <= table_x + 190):
+                continue
+            if table_top + 0.5 < y <= table_top + LAND_ALLOCATION_TEXT_LOOKAHEAD:
+                baselines.append(y)
+    for entity in document.modelspace().query("TEXT"):
+        x = float(entity.dxf.insert.x)
+        y = float(entity.dxf.insert.y)
+        if not (table_x - 5 <= x <= table_x + 190):
+            continue
+        if table_top + 0.5 < y <= table_top + LAND_ALLOCATION_TEXT_LOOKAHEAD:
+            baselines.append(y)
+    if not baselines:
+        return None
+    return min(baselines)
+
+
+def _place_land_allocation_tables_raw(path: Path) -> None:
+    """Строки ведомостей отвода земли — 8. Таблицы 7 и 8 поднимаются и стыкуются."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+    found: list[dict[str, Any]] = []
+    for match in table_pattern.finditer(text):
+        table_text = match.group(1)
+        kind = _is_land_allocation_table_text(table_text)
+        if kind is None:
+            continue
+        coords = re.search(
+            r" 10\n([-+]?\d+(?:\.\d+)?)\n 20\n([-+]?\d+(?:\.\d+)?)(\n 30\n)",
+            table_text,
+        )
+        if not coords:
+            continue
+        rows = len(re.findall(r"\n141\n", table_text))
+        if rows <= 0:
+            continue
+        found.append(
+            {
+                "kind": kind,
+                "x": float(coords.group(1)),
+                "y": float(coords.group(2)),
+                "rows": rows,
+                "span": match.span(),
+            }
+        )
+    if not found:
+        return
+
+    document = ezdxf.readfile(path)
+    targets: dict[int, float] = {}
+    uppers = [item for item in found if item["kind"] == "upper"]
+    lowers = [item for item in found if item["kind"] == "lower"]
+    for upper in uppers:
+        baseline = _land_text_baseline_above(document, upper["x"], upper["y"])
+        partner = None
+        for lower in lowers:
+            if abs(lower["x"] - upper["x"]) > 40:
+                continue
+            if lower["y"] >= upper["y"]:
+                continue
+            if partner is None or abs(lower["y"] - upper["y"]) < abs(partner["y"] - upper["y"]):
+                partner = lower
+        lower_rows = partner["rows"] if partner is not None else 3
+        stamp_top = _stamp_line_below_table(document, upper["x"])
+        top, lower_top = _land_allocation_tops(
+            stamp_top,
+            upper["rows"],
+            lower_rows,
+            baseline,
+            upper["y"],
+        )
+        targets[id(upper)] = top
+        if partner is not None:
+            targets[id(partner)] = lower_top
+
+    updated = text
+    for item in reversed(found):
+        start, end = (int(item["span"][0]), int(item["span"][1]))
+        chunk = updated[start:end]
+        pairs, tail = _split_object_pairs(chunk)
+        changed = False
+        previous = ""
+        for pair in pairs:
+            code = pair[0].strip()
+            if code == "141":
+                try:
+                    current = float(pair[1])
+                except ValueError:
+                    previous = code
+                    continue
+                if abs(current - LAND_ALLOCATION_ROW_HEIGHT) >= 0.001:
+                    pair[1] = f"{LAND_ALLOCATION_ROW_HEIGHT:.1f}"
+                    changed = True
+            elif code == "20" and previous == "10" and id(item) in targets:
+                try:
+                    current = float(pair[1])
+                except ValueError:
+                    previous = code
+                    continue
+                # Точка вставки — первая пара 10/20, её Y совпадает с прочитанным.
+                if abs(current - item["y"]) < 0.05:
+                    target = targets[id(item)]
+                    if abs(current - target) >= 0.05:
+                        pair[1] = f"{target:.4f}"
+                        changed = True
+                    targets.pop(id(item), None)
+            previous = code
+        if not changed:
+            continue
+        rebuilt = _rebuild_dxf_object("ACAD_TABLE", pairs, tail, chunk)
+        updated = updated[:start] + rebuilt + updated[end:]
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+
+
+def _sheet_register_drop(lower_bottom: float, text_top: float | None) -> float:
+    """На сколько опустить пару ведомостей, не накрывая абзац снизу."""
+    if text_top is None:
+        return SHEET_REGISTER_DROP_Y
+    room = lower_bottom - (text_top + SHEET_REGISTER_TEXT_GAP)
+    return max(0.0, min(SHEET_REGISTER_DROP_Y, room))
+
+
+def _lower_sheet_register_tables_raw(path: Path) -> None:
+    """Опускает ведомость комплектов и ведомость ссылочных документов, не задевая текст снизу."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+    found: list[dict[str, Any]] = []
+    for match in table_pattern.finditer(text):
+        table_text = match.group(1)
+        folded = table_text.casefold()
+        if "основных комплектов рабочих чертежей" in folded:
+            kind = "upper"
+        elif "ссылочных и прилагаемых" in folded:
+            kind = "lower"
+        else:
+            continue
+        coords = re.search(
+            r" 10\n([-+]?\d+(?:\.\d+)?)\n 20\n([-+]?\d+(?:\.\d+)?)(\n 30\n)",
+            table_text,
+        )
+        rows = len(re.findall(r"\n141\n", table_text))
+        if not coords or rows <= 0:
+            continue
+        found.append(
+            {
+                "kind": kind,
+                "x": float(coords.group(1)),
+                "y": float(coords.group(2)),
+                "rows": rows,
+                "span": match.span(),
+            }
+        )
+    if not found:
+        return
+
+    document = ezdxf.readfile(path)
+    targets: dict[int, float] = {}
+    for upper in (item for item in found if item["kind"] == "upper"):
+        partner = None
+        for lower in (item for item in found if item["kind"] == "lower"):
+            if abs(lower["x"] - upper["x"]) > 5 or lower["y"] >= upper["y"]:
+                continue
+            if partner is None or lower["y"] > partner["y"]:
+                partner = lower
+        if partner is None:
+            continue
+        lower_bottom = partner["y"] - partner["rows"] * REFERENCE_DOCS_ROW_HEIGHT
+        text_top = None
+        for entity in document.modelspace().query("MTEXT"):
+            raw = entity.text or ""
+            if "Технические решения" not in raw or "данном проекте" not in raw:
+                continue
+            insert = entity.dxf.insert
+            width = float(getattr(entity.dxf, "width", 0) or 0)
+            if not (insert.x - 30 <= upper["x"] <= insert.x + width + 30):
+                continue
+            if insert.y > lower_bottom + 5:
+                continue
+            if text_top is None or insert.y > text_top:
+                text_top = float(insert.y)
+        drop = _sheet_register_drop(lower_bottom, text_top)
+        if drop < 0.05:
+            continue
+        targets[id(upper)] = upper["y"] - drop
+        targets[id(partner)] = partner["y"] - drop
+
+    if not targets:
+        return
+    updated = text
+    for item in reversed(found):
+        if id(item) not in targets:
+            continue
+        start, end = (int(item["span"][0]), int(item["span"][1]))
+        chunk = updated[start:end]
+        pairs, tail = _split_object_pairs(chunk)
+        changed = False
+        previous = ""
+        for pair in pairs:
+            code = pair[0].strip()
+            if code == "20" and previous == "10":
+                try:
+                    current = float(pair[1])
+                except ValueError:
+                    previous = code
+                    continue
+                if abs(current - item["y"]) < 0.05:
+                    pair[1] = f"{targets[id(item)]:.4f}"
+                    changed = True
+                    break
+            previous = code
+        if not changed:
+            continue
+        rebuilt = _rebuild_dxf_object("ACAD_TABLE", pairs, tail, chunk)
+        updated = updated[:start] + rebuilt + updated[end:]
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+
+
 def _set_reference_docs_row_heights_raw(path: Path) -> None:
-    """Строки ведомости ссылочных документов — 8, чтобы таблица не накрывала абзац."""
+    """Строки ведомости ссылочных документов и основных показателей — 6."""
     text = path.read_text(encoding="utf-8", errors="replace")
     table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
 
     def fix_table(match: re.Match[str]) -> str:
         table_text = match.group(1)
-        if not _is_reference_docs_table_text(table_text):
+        if not (
+            _is_reference_docs_table_text(table_text)
+            or "Основные показатели" in table_text
+        ):
             return table_text
         pairs, tail = _split_object_pairs(table_text)
         changed = False

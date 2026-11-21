@@ -4,13 +4,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import ezdxf
+
 from backend.cad.oda_dwg_adapter import (
     _apply_phase_breaker_replacements_raw,
     _cleanup_raw_dxf_text,
     _format_body_note_text,
+    _centered_table_top,
+    _land_allocation_tops,
     _integer_cell_text_is_shared,
+    _ktp_scheme_anchors,
     _move_climate_table_down_raw,
+    _raise_10kv_ktp_schemes,
     _set_reference_docs_row_heights_raw,
+    _sheet_register_drop,
     _sync_va88_nominal_current_raw,
     _work_table_support_field_for_row,
 )
@@ -255,7 +262,39 @@ class AdditionalBreakerTests(unittest.TestCase):
         self.assertNotIn("\n 20\n3767.0\n", updated)
         self.assertNotIn("\n141\n16.0\n", updated)
         self.assertNotIn("\n141\n21.0\n", updated)
-        self.assertGreaterEqual(updated.count("141\n8.0"), 2, updated)
+        self.assertGreaterEqual(updated.count("141\n6.0"), 2, updated)
+        self.assertEqual(_sheet_register_drop(3758.8, 3697.7), 8.0)
+        self.assertEqual(_sheet_register_drop(3700.0, 3697.7), 0.0)
+
+    def test_climate_table_sits_below_the_upper_paragraph(self) -> None:
+        # Центр зазора ещё накрывает абзац, поэтому таблица опускается на высоту шапки.
+        top = _centered_table_top(3785.31, 3720.30, 3.0, 59.95)
+        centered = (3785.31 + 3720.30 + 3.0 + 59.95) / 2
+        self.assertAlmostEqual(top, centered - 12.0, places=2)
+        self.assertLess(top, 3785.31)
+
+    def test_land_tables_stack_under_the_paragraph(self) -> None:
+        # Таблица 8 стоит на линии штампа, таблица 7 остаётся выше с зазором.
+        top, lower = _land_allocation_tops(3634.0, 7, 3, 3770.31, 3723.15)
+        self.assertAlmostEqual(lower - 24.0, 3634.0 + 2.0, places=2)
+        self.assertAlmostEqual(top - 56.0, lower + 8.0, places=2)
+        kept, kept_lower = _land_allocation_tops(None, 7, 3, None, 3766.03)
+        self.assertAlmostEqual(kept, 3766.03, places=2)
+        self.assertAlmostEqual(kept_lower, 3766.03 - 56.0, places=2)
+
+    def test_ktp_scheme_lifts_drawing_and_leaves_stamp(self) -> None:
+        document = ezdxf.new()
+        modelspace = document.modelspace()
+        modelspace.add_text("10 кВ", dxfattribs={"insert": (6743.6, 3896.3), "height": 3})
+        modelspace.add_line((6760, 3716), (6800, 3716))
+        modelspace.add_text("ПСД/48/2026/001-ТКР", dxfattribs={"insert": (6833, 3671), "height": 2.5})
+        anchors = _ktp_scheme_anchors(document)
+        _raise_10kv_ktp_schemes(document, anchors)
+        texts = {entity.dxf.text: entity.dxf.insert.y for entity in modelspace.query("TEXT")}
+        line = next(iter(modelspace.query("LINE")))
+        self.assertAlmostEqual(texts["10 кВ"], 3903.3, places=2)
+        self.assertAlmostEqual(line.dxf.start.y, 3723.0, places=2)
+        self.assertAlmostEqual(texts["ПСД/48/2026/001-ТКР"], 3671, places=2)
 
 
 if __name__ == "__main__":

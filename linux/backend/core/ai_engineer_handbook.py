@@ -96,6 +96,12 @@ FIELD_NAMES: dict[str, str] = {
     "PN": "натяжные подвески, шт",
     "PI": "подвесные изоляторы ПС-70Е, шт",
     "YOPK": "узел ответвления (УОП или УОК)",
+    "ICE_DISTRICT": "район по гололёду",
+    "WIND_DISTRICT": "район по ветру",
+    "CLIMATE_DISTRICT": "климатический район",
+    "ICE_THICKNESS_MM": "толщина стенки гололёда, мм",
+    "WIND_SPEED_MS": "скорость ветра, м/с",
+    "WIND_PRESSURE_PA": "ветровое давление, Па",
 }
 
 CHAT_KNOWLEDGE = """
@@ -147,6 +153,23 @@ CHAT_KNOWLEDGE = """
 а натяжная подвеска для неё: 3 шт (не 6, как у обычной А20-3Н).
 Пролёт опор 10 кВ: не больше 70 м. Площадь отвода 10 кВ: длина трассы 10 кВ × 11.
 Дополнительно на объект: 3 изолятора ШФ20УО. Хомуты Х51: ещё +2 на объект.
+
+КЛИМАТ
+Район по гололёду в этой записке: I, II, III или IV.
+I — стенка гололёда 10 мм, ветер 25 м/с, давление 400 Па.
+II — 15 мм, 29 м/с, 500 Па.
+III — 20 мм, 32 м/с, 650 Па.
+IV — 25 мм, 36 м/с, 800 Па.
+Район по ветру считается отдельно и тоже бывает I–IV. Чем выше район, тем тяжелее провод и опоры.
+В готовом проекте бери район из фактов, не из головы. Если в фактах пусто — так и скажи.
+
+ПОЧЕМУ СТОИТ АРМАТУРА
+Х89 — только потому что есть угловая анкерная УА23*: 1 стяжка на каждую такую опору. Нет УА23* — Х89 в проекте нет.
+У4 — только на анкерную А23, 1 шт.
+ES15 — только на промежуточную П23.
+CS10 и PA15 — на анкерные и концевые, не на П23.
+F207 и NC20 есть почти всегда: по опорам плюс 6 лент на весь объект.
+Если в материалах проекта позиция 0 или её нет — она в эту записку не попала. Объясни, на какой опоре она вообще нужна.
 """.strip()
 
 _GENERIC_CHAT_HINT = (
@@ -385,18 +408,27 @@ def human_project_facts(
     }
 
 
-def chat_system_prompt(facts: dict[str, Any], *, has_project: bool = True) -> str:
+def chat_system_prompt(facts: dict[str, Any], *, has_project: bool = True, fact_limit: int = 14000) -> str:
     style = (
-        "Ты коллега-проектировщик ВЛ 0,4 и 10 кВ. Отвечай по-русски коротко, живым языком. "
-        "Сначала прямой ответ на вопрос. Если на плане ошибка: что не так, почему это плохо, "
-        "как исправить в AutoCAD (какой тип опоры, куда подвинуть, какой пролёт). "
-        "2–6 предложений. Не пересказывай инструкцию, не пиши списки запретов, не используй LaTeX и JSON."
+        "Ты AI Engineer — живой коллега-проектировщик ВЛ 0,4 и 10 кВ. "
+        "Общайся как в обычном чате: по-русски, тепло, можно смайлики, без канцелярита. "
+        "Каждый вопрос разбирай вдумчиво. Сначала прямой ответ, потом почему так именно в этом проекте, "
+        "потом коротко норма, если она помогает понять. "
+        "Знаешь обе сети. 0,4 кВ: П23, ПП23, А23, УА23*, К21, СИП, щит, заземления. "
+        "10 кВ: П20-3Н, А20-3Н, УП20-3Н, УА20-3Н, РЛК, траверсы, изоляторы. "
+        "Арматура: если позиция есть в материалах — скажи сколько и от каких опор она набралась. "
+        "Если ноль или её нет — так и скажи и объясни, на каких опорах она вообще ставится. "
+        "Стяжка Х89 только на УА23*, по одной на опору. "
+        "Район по гололёду и по ветру бери из фактов проекта. "
+        "Примеры инженера, если они есть ниже, показывают способ объяснять, а не единственные вопросы. "
+        "На вопрос, которого нет среди примеров, тоже отвечай по фактам этого проекта. "
+        "Цифры этого проекта не выдумывай. Не меняй проект. Не пиши JSON и LaTeX."
     )
     if has_project:
         return (
             f"{style}\n\nНормы:\n{CHAT_KNOWLEDGE}\n\n"
-            "Проект уже собран. Цифры бери только из фактов ниже.\n"
-            f"{json.dumps(facts, ensure_ascii=False, default=str)[:8000]}"
+            "Записка уже сформирована. Отвечай по этому проекту. Цифры только из фактов ниже.\n"
+            f"{json.dumps(facts, ensure_ascii=False, default=str)[:fact_limit]}"
         )
     return (
         f"{style}\n\nНормы:\n{CHAT_KNOWLEDGE}\n\n"
@@ -509,6 +541,10 @@ def local_chat_reply(
     )
     if layout_reply:
         return sanitize_chat_reply(layout_reply)[:1800]
+
+    note_reply = filled_note_reply(lowered, facts, has_project=has_project)
+    if note_reply:
+        return sanitize_chat_reply(note_reply)[:4000]
 
     findings_reply = _findings_reply(lowered, facts, has_project=has_project)
     if findings_reply:
@@ -1578,12 +1614,181 @@ def _span_or_ground_reply(question: str, facts: dict[str, Any], *, has_project: 
     return ""
 
 
+def filled_note_reply(question: str, facts: dict[str, Any], *, has_project: bool) -> str:
+    """Значение из записки или состав плана. Чужое замечание сюда не подставляется."""
+    if not has_project:
+        return ""
+    query = (question or "").lower().replace("ё", "е")
+    card = facts.get("карта_значений") or {}
+    if not isinstance(card, dict):
+        card = {}
+
+    if re.search(r"что (программа |ты )?замен|что подстав|вс[её] пол|всю записк|вся записк|что стоит в записке", query):
+        return _format_note_card(card)
+    if re.search(r"весь план|что на плане|расскажи про план|какие опоры стоят|что за опоры|состав плана", query):
+        return _plan_overview(facts)
+    if re.search(r"район\w*.{0,24}ветр|по ветру|ветров\w* район", query):
+        return _climate_from_note(card, "ветр")
+    if re.search(r"гололед|по гололед|стенк\w+ голол", query):
+        return _climate_from_note(card, "голол")
+
+    if not re.search(r"какой|какая|какое|какие|сколько|что стоит|чему равен", query):
+        return ""
+    found = _best_note_field(query, card)
+    if not found:
+        return ""
+    label, value = found
+    return f"В этой записке «{label}» — {value}."
+
+
+def _format_note_card(card: dict[str, Any]) -> str:
+    rows = [(str(key), value) for key, value in card.items() if value not in (None, "")]
+    if not rows:
+        return "В этой записке программа ещё не подставила значения. Сначала нажмите Старт."
+    lines = [f"{label}: {value}" for label, value in rows]
+    return "Программа подставила в записку:\n" + "\n".join(lines)
+
+
+def _plan_overview(facts: dict[str, Any]) -> str:
+    plan = facts.get("план_0_4") if isinstance(facts.get("план_0_4"), dict) else {}
+    plan10 = facts.get("план_10") if isinstance(facts.get("план_10"), dict) else {}
+    lines: list[str] = []
+    if plan.get("длина_м") not in (None, ""):
+        lines.append(f"Трасса 0,4 кВ: {plan.get('длина_м')} м.")
+    for key, label in (
+        ("опор_П23", "П23"),
+        ("опор_ПП23", "ПП23"),
+        ("опор_А23", "А23"),
+        ("опор_УА23", "УА23*"),
+        ("опор_К21", "К21"),
+    ):
+        count = plan.get(key)
+        if count not in (None, "", 0, "0"):
+            lines.append(f"{label}: {count}.")
+    if plan.get("заземлений") not in (None, ""):
+        lines.append(f"Заземлений 0,4 кВ: {plan.get('заземлений')}.")
+    if plan10.get("длина_м") not in (None, ""):
+        lines.append(f"Трасса 10 кВ: {plan10.get('длина_м')} м.")
+    for key, label in (
+        ("опор_П20_3Н", "П20-3Н"),
+        ("опор_А20_3Н", "А20-3Н"),
+        ("опор_УП20_3Н", "УП20-3Н"),
+        ("опор_УА20_3Н", "УА20-3Н"),
+        ("опор_А20_3Н_с_РЛК", "А20-3Н с РЛК"),
+    ):
+        count = plan10.get(key)
+        if count not in (None, "", 0, "0"):
+            lines.append(f"{label}: {count}.")
+    if not lines:
+        return "По этому плану опоры и длина ещё не посчитаны."
+    return "На плане " + " ".join(lines)
+
+
+def _climate_from_note(card: dict[str, Any], kind: str) -> str:
+    if kind == "ветр":
+        district = _note_value(card, "район по ветру")
+        speed = _note_value(card, "скорость ветра")
+        pressure = _note_value(card, "ветровое давление")
+        if district is None and speed is None and pressure is None:
+            return (
+                "В этой записке район по ветру не подставлен. "
+                "Программа берёт его из ТУ. Районы по ветру бывают I, II, III и IV."
+            )
+        bits = []
+        if district is not None:
+            bits.append(f"Район по ветру в этой записке — {district}.")
+        if speed is not None:
+            bits.append(f"Скорость ветра {speed} м/с.")
+        if pressure is not None:
+            bits.append(f"Ветровое давление {pressure} Па.")
+        bits.append("Районы по ветру бывают I, II, III и IV: чем выше, тем больше скорость и давление.")
+        return " ".join(bits)
+    district = _note_value(card, "район по гололеду")
+    thickness = _note_value(card, "толщина стенки гололеда")
+    if district is None and thickness is None:
+        return (
+            "В этой записке район по гололёду не подставлен. "
+            "Районы бывают I, II, III и IV: стенка 10, 15, 20 или 25 мм."
+        )
+    bits = []
+    if district is not None:
+        bits.append(f"Район по гололёду в этой записке — {district}.")
+    if thickness is not None:
+        bits.append(f"Толщина стенки гололёда {thickness} мм.")
+    bits.append("Районы по гололёду: I — 10 мм, II — 15 мм, III — 20 мм, IV — 25 мм.")
+    return " ".join(bits)
+
+
+def _note_value(card: dict[str, Any], needle: str) -> Any:
+    needle = needle.lower().replace("ё", "е")
+    for key, value in card.items():
+        label = str(key).lower().replace("ё", "е")
+        if needle in label and value not in (None, ""):
+            return value
+    return None
+
+
+_NOTE_STOP = {
+    "какой",
+    "какая",
+    "какое",
+    "какие",
+    "сколько",
+    "почему",
+    "зачем",
+    "стоит",
+    "стоят",
+    "записке",
+    "записка",
+    "проекте",
+    "проект",
+    "этом",
+    "этой",
+    "этого",
+    "нужно",
+    "надо",
+    "можно",
+    "будет",
+    "было",
+}
+
+
+def _best_note_field(question: str, card: dict[str, Any]) -> tuple[str, Any] | None:
+    tokens = [
+        token
+        for token in re.findall(r"[а-яa-z0-9*]{4,}", question)
+        if token not in _NOTE_STOP
+    ]
+    if not tokens:
+        return None
+    scored: list[tuple[int, str, Any]] = []
+    for key, value in card.items():
+        if value in (None, ""):
+            continue
+        label = str(key).lower().replace("ё", "е")
+        overlap = [token for token in tokens if token in label]
+        if not overlap:
+            continue
+        score = sum(2 for _ in overlap)
+        if label in question:
+            score += 5
+        scored.append((score, str(key), value))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    if len(scored) > 1 and scored[0][0] < scored[1][0] + 2 and scored[0][0] < 5:
+        return None
+    if scored[0][0] < 2:
+        return None
+    return scored[0][1], scored[0][2]
+
+
 def _findings_reply(question: str, facts: dict[str, Any], *, has_project: bool) -> str:
     asked = bool(
         re.search(
             r"что не так|ошибк|замечан|как исправ|неправиль|неверн|почему так|"
-            r"что поправить|что исправить|что проверить|глазам|какие опор|"
-            r"какая опора|в чем проблем|что сломал",
+            r"что поправить|что исправить|что проверить|глазам|"
+            r"в чем проблем|что сломал",
             question,
         )
     )
@@ -1610,9 +1815,9 @@ def _project_fallback_reply(question: str, facts: dict[str, Any]) -> str:
         if _score_finding(question, ranked[0]) > 0:
             return _format_findings(ranked, limit=2)
         return (
-            "Смотрю этот проект. "
-            + _format_findings(findings, limit=2)
-            + " Если нужно другое — спросите конкретнее: дубли, пролёт, тип опоры, слой."
+            "Могу сказать любое значение, которое программа подставила в записку, "
+            "и что считано с плана: опоры, длина, заземления, район по ветру и по гололёду. "
+            "Спросите, например: «какой район по ветру» или «что на плане»."
         )
     kind = facts.get("тип_этого_проекта") or ""
     plan = facts.get("план_0_4") or {}

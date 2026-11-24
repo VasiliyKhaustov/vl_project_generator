@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -538,6 +539,45 @@ class AiEngineerTests(unittest.TestCase):
         self.assertIn("УА23*", findings)
         self.assertIn("Как исправить", findings)
 
+        wind = local_chat_reply(
+            "какой район по ветру?",
+            {
+                "карта_значений": {
+                    "район по ветру": "II",
+                    "скорость ветра, м/с": "29",
+                    "ветровое давление, Па": "500",
+                },
+                "замечания": [
+                    {
+                        "замечание": "На плане несколько полилиний трассы",
+                        "почему": "выбрана не та линия",
+                        "как_исправить": "оставьте одну трассу",
+                    }
+                ],
+            },
+            has_project=True,
+        )
+        self.assertIn("II", wind)
+        self.assertIn("29", wind)
+        self.assertNotIn("полилини", wind.lower())
+
+        whole_note = local_chat_reply(
+            "что программа заменила в записке?",
+            {"карта_значений": {"заявитель": "Иванов", "район по гололёду": "III"}},
+            has_project=True,
+        )
+        self.assertIn("Иванов", whole_note)
+        self.assertIn("III", whole_note)
+
+        plan = local_chat_reply(
+            "что на плане?",
+            {"план_0_4": {"длина_м": 120, "опор_П23": 4, "опор_К21": 1, "опор_А23": 0, "заземлений": 2}},
+            has_project=True,
+        )
+        self.assertIn("120", plan)
+        self.assertIn("П23", plan)
+        self.assertIn("4", plan)
+
         angle = local_chat_reply("какую мне опору поставить на угол 50 градусов")
         self.assertIn("УА23*", angle)
         self.assertIn("50", angle)
@@ -766,6 +806,72 @@ class AiEngineerTests(unittest.TestCase):
         self.assertEqual(audit["support_gaps_04"], [])
         distances = [item["distance_m"] for item in audit.get("supports_off_route") or []]
         self.assertEqual(distances, [])
+
+
+class LessonTrainingTests(unittest.TestCase):
+    def test_blank_lessons_are_skipped_and_training_finds_a_paraphrase(self) -> None:
+        from backend.core.ai_engineer_lessons import parse_lessons, similar_lessons, train_lessons
+
+        text = """
+## Вопрос
+(напишите вопрос)
+
+## Ответ
+(напишите ответ)
+
+---
+
+## Вопрос
+почему в записке стоит стяжка Х89
+
+## Ответ
+Стяжка Х89 стоит только из-за угловой анкерной УА23: одна штука на каждую такую опору.
+
+---
+
+## Вопрос
+какой район по гололеду бывает
+
+## Ответ
+Районы по гололёду бывают I, II, III и IV. Чем выше район, тем толще стенка гололёда.
+"""
+        lessons = parse_lessons(text)
+        self.assertEqual(len(lessons), 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "уроки.md"
+            source.write_text(text, encoding="utf-8")
+            destination = Path(tmp) / "model.json"
+            trained = train_lessons(source, destination=destination)
+            self.assertEqual(trained["count"], 2)
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+            hits = similar_lessons("зачем в ведомости Х89", model=payload)
+            self.assertGreaterEqual(hits[0]["score"], 0.2)
+            self.assertIn("УА23", hits[0]["answer"])
+
+    def test_training_keeps_every_lesson(self) -> None:
+        from backend.core.ai_engineer_lessons import parse_lessons, train_lessons
+
+        blocks = [
+            f"## Вопрос\nвопрос номер {index} про опору\n\n## Ответ\nответ номер {index} достаточно длинный"
+            for index in range(40)
+        ]
+        text = "\n\n---\n\n".join(blocks)
+        self.assertEqual(len(parse_lessons(text)), 40)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "уроки.md"
+            source.write_text(text, encoding="utf-8")
+            destination = Path(tmp) / "model.json"
+            trained = train_lessons(source, destination=destination)
+            self.assertEqual(trained["count"], 40)
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["lessons"]), 40)
+            self.assertIn("вопрос номер 39", payload["lessons"][-1]["question"])
+            from backend.core.ai_engineer_lessons import lesson_prompt
+
+            prompt = lesson_prompt("какой район по гололёду в этом проекте", model=payload)
+            self.assertIn("не список вопросов", prompt)
+            self.assertIn("вопрос номер 39", prompt)
+            self.assertIn("вопрос номер 1", prompt)
 
 
 if __name__ == "__main__":

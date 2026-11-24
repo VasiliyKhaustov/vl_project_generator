@@ -308,6 +308,7 @@ body[data-theme="light"] .glass {
 
 .ai-engineer.glass {
   border-color: rgba(52, 211, 153, 0.32);
+  overflow: visible;
 }
 
 .topbar {
@@ -3213,16 +3214,27 @@ body.is-check-panel-open .check-panel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 8px 5px;
-  border-radius: 10px;
-  background: #eceff3;
-  color: #5e6872;
+  padding: 5px 11px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.34), rgba(186, 230, 253, 0.16) 46%, rgba(196, 181, 253, 0.2));
+  color: #f4fbff;
   font-size: 11px;
   font-weight: 750;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   line-height: 1;
-  box-shadow: 0 6px 14px rgba(8, 16, 28, 0.22);
+  box-shadow:
+    0 10px 22px rgba(4, 10, 24, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
   pointer-events: none;
+}
+
+body[data-theme="light"] .beta-tag {
+  color: #16324a;
+  border-color: rgba(255, 255, 255, 0.72);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.82), rgba(214, 236, 255, 0.62) 50%, rgba(224, 231, 255, 0.7));
 }
 
 #openAiEngineerTab {
@@ -3233,10 +3245,10 @@ body.is-check-panel-open .check-panel {
 #openAiEngineerTab .beta-tag,
 #aiEngineerTabButton .beta-tag {
   position: absolute;
-  top: -9px;
-  right: 6px;
-  z-index: 2;
-  padding: 3px 6px 4px;
+  top: -11px;
+  right: -6px;
+  z-index: 3;
+  padding: 4px 8px 5px;
   font-size: 9px;
 }
 
@@ -3247,13 +3259,12 @@ body.is-check-panel-open .check-panel {
 
 .beta-tag--corner {
   position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 4;
-  padding: 11px 18px 12px;
-  border-radius: 0 26px 0 16px;
-  font-size: 15px;
-  letter-spacing: 0.14em;
+  top: -14px;
+  right: 22px;
+  z-index: 6;
+  padding: 8px 16px 9px;
+  font-size: 13px;
+  letter-spacing: 0.16em;
 }
 
 .ai-engineer__marks {

@@ -13,10 +13,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from backend.core.ai_engineer_lessons import lesson_prompt, taught_reply
 from backend.core.ai_engineer_handbook import (
     chat_system_prompt,
     human_project_facts,
     is_generic_local_chat,
+    filled_note_reply,
     local_chat_reply,
     sanitize_chat_reply,
 )
@@ -876,8 +878,20 @@ def chat_with_project(
         facts = {}
         has_project = False
 
+    taught = taught_reply(text, local_reply=local_reply)
+    if taught:
+        local_reply = taught
+
+    note_reply = ""
+    if has_project and not re.search(r"почему|зачем|отчего", text.lower()):
+        note_reply = sanitize_chat_reply(
+            filled_note_reply(text, facts, has_project=True)
+        )
+    if note_reply and note_reply == local_reply:
+        return {"ok": True, "reply": note_reply, "model": "rules", "error": ""}
+
     settings = _llm_settings()
-    if not settings["api_key"] or not is_generic_local_chat(local_reply):
+    if not settings["api_key"]:
         return {"ok": True, "reply": local_reply, "model": "rules", "error": ""}
 
     def _ask_llm() -> str:
@@ -890,12 +904,175 @@ def chat_with_project(
         )
 
     try:
-        reply = run_with_timeout(_ask_llm, 8.0)
+        reply = run_with_timeout(_ask_llm, 18.0)
     except Exception:
         reply = ""
     if reply:
         return {"ok": True, "reply": reply, "model": settings["model"], "error": ""}
     return {"ok": True, "reply": local_reply, "model": "rules", "error": ""}
+
+
+_ROUTE_DUMP_KEYS = (
+    "опоры_0_4_на_трассе",
+    "заземления_на_трассе",
+)
+_ISSUE_LIST_KEYS = (
+    "порядок_номеров_опор",
+    "дубли_опор",
+    "опоры_не_на_трассе",
+    "заземления_не_на_трассе",
+    "неверный_тип_на_угле",
+    "незаполненные_поля_записки",
+    "замечания",
+)
+_COORD_KEYS = {"x", "y", "z", "station_m", "insert", "point", "coordinates", "coord", "points"}
+_CARD_KEEP_WORDS = (
+    "опор",
+    "голол",
+    "ветр",
+    "климат",
+    "район",
+    "арматур",
+    "лент",
+    "стяж",
+    "зазем",
+    "траверс",
+    "фаз",
+    "длин",
+    "сип",
+    "щит",
+    "бетон",
+    "стойк",
+    "сечен",
+    "подвеск",
+    "кроншт",
+    "зажим",
+    "хомут",
+    "изолятор",
+    "площад",
+    "провод",
+    "модул",
+    "фобос",
+    "es15",
+    "f207",
+    "nc20",
+    "cs10",
+    "pa15",
+    "х89",
+    "x89",
+    "к21",
+    "п23",
+    "а23",
+    "уа23",
+    "пп23",
+)
+_FACT_ORDER = (
+    "номер_проекта",
+    "тип_этого_проекта",
+    "фазность",
+    "сечение_0_4",
+    "сечение_10",
+    "план_0_4",
+    "план_10",
+    "материалы_0_4_по_этому_проекту",
+    "нет_в_ведомости_0_4",
+    "материалы_10_по_этому_проекту",
+    "нет_в_ведомости_10",
+    "карта_значений",
+    "вывод_аи",
+    "оценка_аи",
+    "замечания",
+    "заявитель",
+    "адрес",
+    "мощность_квт",
+    "мощность_трансформатора",
+    "подстанция",
+    "шаблон_записки",
+    "незаполненные_поля_записки",
+    "порядок_номеров_опор",
+    "дубли_опор",
+    "опоры_не_на_трассе",
+    "заземления_не_на_трассе",
+    "неверный_тип_на_угле",
+    "опоры_0_4_на_трассе",
+    "заземления_на_трассе",
+)
+
+
+def _zero_quantity(value: Any) -> bool:
+    if value in (0, 0.0, "0", "0.0", "0,0"):
+        return True
+    try:
+        return float(str(value).replace(",", ".")) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _split_materials(materials: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    present: dict[str, Any] = {}
+    absent: list[str] = []
+    for key, value in materials.items():
+        if _zero_quantity(value):
+            absent.append(str(key))
+        else:
+            present[str(key)] = value
+    return present, absent
+
+
+def _compact_issue(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    return {
+        key: value
+        for key, value in item.items()
+        if key not in _COORD_KEYS and not str(key).endswith(("_xy", "_point"))
+    }
+
+
+def _card_for_chat(card: dict[str, Any]) -> dict[str, Any]:
+    """Климат, длины, фазность, опоры и материалы остаются, даже если карта длинная."""
+
+    def important(key: str) -> bool:
+        text = str(key).lower().replace("ё", "е")
+        return any(word in text for word in _CARD_KEEP_WORDS)
+
+    preferred = [(key, value) for key, value in card.items() if important(str(key))]
+    rest = [(key, value) for key, value in card.items() if not important(str(key))]
+    return dict((preferred + rest)[:80])
+
+
+def _facts_for_chat(facts: dict[str, Any]) -> dict[str, Any]:
+    """Факты этого проекта без выгрузки координат: опоры, материалы, климат, длины, замечания."""
+    source = dict(facts or {})
+    for key, absent_key in (
+        ("материалы_0_4_по_этому_проекту", "нет_в_ведомости_0_4"),
+        ("материалы_10_по_этому_проекту", "нет_в_ведомости_10"),
+    ):
+        materials = source.get(key)
+        if isinstance(materials, dict):
+            present, absent = _split_materials(materials)
+            source[key] = present
+            if absent:
+                source[absent_key] = absent
+    for key in _ROUTE_DUMP_KEYS:
+        value = source.get(key)
+        if isinstance(value, list):
+            source[key] = {"количество": len(value)}
+    for key in _ISSUE_LIST_KEYS:
+        value = source.get(key)
+        if isinstance(value, list):
+            source[key] = [_compact_issue(item) for item in value[:12]]
+    card = source.get("карта_значений")
+    if isinstance(card, dict):
+        source["карта_значений"] = _card_for_chat(card)
+    ordered: dict[str, Any] = {}
+    for key in _FACT_ORDER:
+        if key in source:
+            ordered[key] = source[key]
+    for key, value in source.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
 
 
 def _llm_chat_reply(
@@ -908,28 +1085,48 @@ def _llm_chat_reply(
 ) -> str:
     import httpx
 
-    system = chat_system_prompt(facts, has_project=has_project)
+    system = chat_system_prompt(
+        _facts_for_chat(facts),
+        has_project=has_project,
+        fact_limit=10000,
+    )
+    lessons = lesson_prompt(text)
+    if lessons:
+        system = f"{system}\n\n{lessons}"
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
-    for item in (history or [])[-16:]:
+    for item in (history or [])[-12:]:
         role = item.get("role")
         content = str(item.get("content") or "").strip()
         if role in {"user", "assistant"} and content:
-            messages.append({"role": role, "content": content})
+            messages.append({"role": role, "content": content[:3200]})
     messages.append({"role": "user", "content": text})
+    body = {
+        "model": settings["model"],
+        "temperature": 0.3,
+        "max_tokens": 700,
+        "reasoning": {"effort": "none"},
+        "messages": messages,
+    }
     response = httpx.post(
         f"{settings['base_url']}/chat/completions",
         headers={
             "Authorization": f"Bearer {settings['api_key']}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": settings["model"],
-            "temperature": 0.2,
-            "max_tokens": 450,
-            "messages": messages,
-        },
-        timeout=httpx.Timeout(7.0, connect=2.0),
+        json=body,
+        timeout=httpx.Timeout(16.0, connect=4.0),
     )
+    if response.status_code == 400 and "reasoning" in body:
+        body.pop("reasoning")
+        response = httpx.post(
+            f"{settings['base_url']}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings['api_key']}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+            timeout=httpx.Timeout(16.0, connect=4.0),
+        )
     response.raise_for_status()
     payload = response.json()
     return sanitize_chat_reply(str(payload["choices"][0]["message"]["content"] or ""))

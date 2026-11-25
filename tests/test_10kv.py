@@ -8,6 +8,7 @@ from backend.core.project_type import is_10kv_project, resolve_project_is_10kv, 
 from backend.core.plan_reader_10kv import (
     classify_10kv_support_label,
     read_plan_10kv_data,
+    _count_10kv_supports,
     _is_usable_04_route_length,
 )
 from backend.core.replacement_builder_10kv import build_replacement_map_10kv
@@ -224,7 +225,7 @@ class Calculator10kVTests(unittest.TestCase):
         self.assertEqual(result["KTP_ENTRY_10_KM"], "0,005")
         self.assertEqual(result["POWER_10"], "0,355")
         self.assertEqual(result["KM_10"], "0,355")
-        self.assertEqual(result["KM10"], 1.113)
+        self.assertEqual(result["KM10"], 0.371)
         self.assertEqual(result["KM_04_ROUTE"], "0,388")
         self.assertEqual(result["KTP_ENTRY_KM"], "0,005")
         self.assertEqual(result["KM_04"], "0,393")
@@ -251,6 +252,7 @@ class Calculator10kVTests(unittest.TestCase):
         self.assertEqual(result["SQUARE_10kV"], 3850)
         self.assertEqual(result["SQUARE_10"], 3850)
         self.assertEqual(result["IZM"], 6)
+        self.assertEqual(result["SUPPORTS_INSTALL_NOTE_10"], "по 6 опорам")
         self.assertEqual(result["SV10"], 10)
         self.assertEqual(result["H12_10"], 5)
         self.assertEqual(result["H12_8"], 1)
@@ -278,7 +280,13 @@ class Calculator10kVTests(unittest.TestCase):
                 "line_length_m": 98.7,
             },
         )
+        self.assertEqual(result["KM_10_ROUTE"], "0,111")
+        self.assertEqual(result["POWER_10"], "0,116")
+        self.assertEqual(result["KM_10"], "0,116")
+        self.assertEqual(result["KM10"], 0.121)
+        self.assertEqual(result["SUPPORTS_INSTALL_NOTE_10"], "по 2 опорам")
         self.assertEqual(result["KM_04_ROUTE"], "0,099")
+        self.assertEqual(result["KM_04"], "0,104")
         self.assertEqual(result["KTP_ENTRY_KM"], "0,005")
         self.assertEqual(result["H12_10"], 1)
         self.assertEqual(result["H12_8"], 1)
@@ -388,6 +396,27 @@ class PlanReader10kVTests(unittest.TestCase):
             None,
         )
         self.assertEqual(classify_10kv_support_label("А23"), None)
+
+    def test_grounding_on_support_layer_is_not_a_support(self) -> None:
+        import ezdxf
+
+        document = ezdxf.new()
+        document.blocks.new("Пл_Заземление")
+        document.blocks.new("Пл_ОпораНВ_А23")
+        modelspace = document.modelspace()
+        modelspace.add_blockref(
+            "Пл_Заземление",
+            (0, 0),
+            dxfattribs={"layer": "Пл_А20-3Н_РЛК"},
+        )
+        modelspace.add_blockref(
+            "Пл_ОпораНВ_А23",
+            (10, 0),
+            dxfattribs={"layer": "Пл_А20-3Н_РЛК"},
+        )
+        supports = _count_10kv_supports(document, modelspace)
+        self.assertEqual(supports["ARLK"], 1)
+        self.assertEqual(supports["P20"], 0)
 
     def test_read_milovanovo_plan_supports_and_04kv_length(self) -> None:
         plan_dxf = Path("output/result/temp/plan_debug.dxf")

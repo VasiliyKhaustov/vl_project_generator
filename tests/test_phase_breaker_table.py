@@ -202,6 +202,14 @@ class AdditionalBreakerTests(unittest.TestCase):
         ]
         self.assertIsNone(_work_table_support_field_for_row(horizontal))
 
+    def test_10kv_work_rows_are_not_counted_as_04kv_supports(self) -> None:
+        intermediate = ["1.1", "- промежуточная 27.0002-9", "П20-3Н", "шт", "1"]
+        disconnector = ["1.2", "- анкерная с разъединителем 27.0002-11", "А20-3Н с Р/ЛК", "шт", "0"]
+        plain_intermediate = ["1", "- промежуточная 25.0017-02", "П23", "шт", "3"]
+        self.assertEqual(_work_table_support_field_for_row(intermediate), "P20")
+        self.assertEqual(_work_table_support_field_for_row(disconnector), "ARLK")
+        self.assertEqual(_work_table_support_field_for_row(plain_intermediate), "P23")
+
     def test_shared_integer_quantity_is_not_copied_into_other_rows(self) -> None:
         class Tag:
             def __init__(self, code: int, value: str) -> None:

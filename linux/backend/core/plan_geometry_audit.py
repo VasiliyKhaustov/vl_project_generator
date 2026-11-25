@@ -9,6 +9,7 @@ from typing import Any
 import ezdxf
 
 from backend.core.dxf_reader import (
+    ROUTE_10_MARK,
     _attribute_value,
     _collect_support_candidates,
     _effective_block_name,
@@ -20,12 +21,10 @@ from backend.core.dxf_reader import (
     _is_direct_grounding_insert,
     _lwpolyline_points,
     _polyline_points_for_entity,
+    iter_lwpolylines_for_mark,
 )
 from backend.core.plan_reader_10kv import (
-    LINE_04_BRANCH_LAYERS,
-    LINE_04_BRANCH_MAX_LENGTH_M,
     _find_line_length_04kv,
-    _layer_matches_04,
     _open_polyline_length,
 )
 
@@ -709,23 +708,11 @@ def _collect_10kv_support_points(modelspace: Any, document: Any) -> list[dict[st
 
 
 def _best_route_points(modelspace: Any, *, kind: str) -> list[tuple[float, float, float]]:
-    from backend.core.plan_reader_10kv import LINE_10KV_LAYERS
-
     best_points: list[tuple[float, float, float]] = []
     best_length = 0.0
-    for polyline in modelspace.query("LWPOLYLINE"):
-        layer_name = str(polyline.dxf.layer or "")
-        if kind == "10":
-            if layer_name not in LINE_10KV_LAYERS:
-                continue
-        else:
-            # Только явная трасса 0,4 кВ; длинный слой «0» не подменяем.
-            if not _layer_matches_04(layer_name):
-                if layer_name not in LINE_04_BRANCH_LAYERS:
-                    continue
+    mark = ROUTE_10_MARK if kind == "10" else "Электрика_04"
+    for polyline in iter_lwpolylines_for_mark(modelspace, mark):
         length = _open_polyline_length(modelspace, polyline)
-        if kind == "04" and layer_name in LINE_04_BRANCH_LAYERS and length > LINE_04_BRANCH_MAX_LENGTH_M:
-            continue
         if length <= best_length:
             continue
         points = _lwpolyline_points(polyline)

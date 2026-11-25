@@ -114,18 +114,19 @@ const WIRE_OPTION_LABELS = {
 
 const translations = {
   ru: {
-    brand: "Автоматизация ТУ",
+    brand: "PRO",
     systemStatus: "Инженерная система подготовки документации",
     languageLabel: "Язык",
     themeLabel: "Тема",
     settingsOpen: "Настройки",
     settingsTitle: "Настройки",
+    guideOpen: "Инструкция по использованию",
     themeLight: "Светлая тема",
     themeDark: "Темная тема",
     statusIdleTitle: "Очередь и прогресс",
     statusIdleText: "После запуска здесь появится ход обработки и список проектов.",
     eyebrow: "Локальный инженерный контур",
-    heroTitle: "Автоматизация подготовки документации по ТУ",
+    heroTitle: "Powerline Rationalization & Optimization",
     heroCopy: "Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку.",
     inputData: "Исходные данные",
     idle: "Ожидание",
@@ -271,18 +272,19 @@ const translations = {
     yopkAnchor: "От анкерной (УОК)",
   },
   en: {
-    brand: "TU Automation",
+    brand: "PRO",
     systemStatus: "Engineering documentation system",
     languageLabel: "Language",
     themeLabel: "Theme",
     settingsOpen: "Settings",
     settingsTitle: "Settings",
+    guideOpen: "How to use",
     themeLight: "Light theme",
     themeDark: "Dark theme",
     statusIdleTitle: "Queue and progress",
     statusIdleText: "After you start, processing progress and the project list appear here.",
     eyebrow: "Local engineering workspace",
-    heroTitle: "Automated TU documentation preparation",
+    heroTitle: "Powerline Rationalization & Optimization",
     heroCopy: "Upload TU and a finished DWG/DXF plan, enter the project number, and the system will prepare the note and PDF package.",
     inputData: "Input data",
     idle: "Waiting",
@@ -425,18 +427,19 @@ const translations = {
     yopkAnchor: "From anchor (UOK)",
   },
   de: {
-    brand: "TU-Automatisierung",
+    brand: "PRO",
     systemStatus: "System fur technische Dokumentation",
     languageLabel: "Sprache",
     themeLabel: "Thema",
     settingsOpen: "Einstellungen",
     settingsTitle: "Einstellungen",
+    guideOpen: "Bedienungsanleitung",
     themeLight: "Helles Design",
     themeDark: "Dunkles Design",
     statusIdleTitle: "Warteschlange und Fortschritt",
     statusIdleText: "Nach dem Start erscheinen hier der Fortschritt und die Projektliste.",
     eyebrow: "Lokaler Engineering-Arbeitsbereich",
-    heroTitle: "Automatisierte Dokumentation nach TU",
+    heroTitle: "Powerline Rationalization & Optimization",
     heroCopy: "Laden Sie TU und den fertigen DWG/DXF-Plan hoch, geben Sie die Projektnummer ein, und das System erstellt Notiz und PDF-Paket.",
     inputData: "Eingaben",
     idle: "Warten",
@@ -572,18 +575,19 @@ const translations = {
     checkSeverityInfo: "Info",
   },
   it: {
-    brand: "Automazione TU",
+    brand: "PRO",
     systemStatus: "Sistema per documentazione tecnica",
     languageLabel: "Lingua",
     themeLabel: "Tema",
     settingsOpen: "Impostazioni",
     settingsTitle: "Impostazioni",
+    guideOpen: "Istruzioni per l'uso",
     themeLight: "Tema chiaro",
     themeDark: "Tema scuro",
     statusIdleTitle: "Coda e progresso",
     statusIdleText: "Dopo l'avvio qui compaiono il progresso e l'elenco dei progetti.",
     eyebrow: "Area tecnica locale",
-    heroTitle: "Preparazione automatica della documentazione TU",
+    heroTitle: "Powerline Rationalization & Optimization",
     heroCopy: "Carica TU e il piano DWG/DXF pronto, inserisci il numero di progetto e il sistema preparera la nota e il pacchetto PDF.",
     inputData: "Dati iniziali",
     idle: "In attesa",
@@ -886,6 +890,32 @@ settingsTrigger?.addEventListener("click", (event) => {
   setWireMenuOpen(false);
   setLanguageMenuOpen(false);
   setSettingsMenuOpen(willOpen);
+});
+
+const usageGuide = document.querySelector("#usageGuide");
+const usageGuideBackdrop = document.querySelector("#usageGuideBackdrop");
+const openUsageGuide = document.querySelector("#openUsageGuide");
+const closeUsageGuide = document.querySelector("#closeUsageGuide");
+
+function setUsageGuideOpen(isOpen) {
+  if (!usageGuide || !usageGuideBackdrop) return;
+  usageGuide.hidden = !isOpen;
+  usageGuideBackdrop.hidden = !isOpen;
+  document.body.classList.toggle("is-guide-open", isOpen);
+}
+
+openUsageGuide?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setSettingsMenuOpen(false);
+  setUsageGuideOpen(true);
+});
+
+closeUsageGuide?.addEventListener("click", () => setUsageGuideOpen(false));
+usageGuideBackdrop?.addEventListener("click", () => setUsageGuideOpen(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && usageGuide && !usageGuide.hidden) {
+    setUsageGuideOpen(false);
+  }
 });
 
 languageTrigger.addEventListener("click", (event) => {

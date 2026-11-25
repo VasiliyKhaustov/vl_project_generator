@@ -7,7 +7,15 @@ from typing import Any
 
 import ezdxf
 
-from .dxf_reader import _dimension_chain_length_for_polyline, _is_geometrically_closed, _lwpolyline_points, _points_length
+from .dxf_reader import (
+    ROUTE_04_MARK,
+    ROUTE_10_MARK,
+    _dimension_chain_length_for_polyline,
+    _is_geometrically_closed,
+    _lwpolyline_points,
+    _points_length,
+    iter_lwpolylines_for_mark,
+)
 
 
 SUPPORT_10KV_BLOCKS = {
@@ -33,14 +41,13 @@ SUPPORT_04KV_BLOCKS = {
 
 SUPPORT_LABEL_ATTR_TAGS = ("SL_NAME_001", "SL_NAME", "Название", "NAME")
 
-LINE_10KV_LAYERS = ("10", "Электрика_10")
-LINE_04_LAYERS = ("04", "Электрика_04")
-LINE_04_LAYER_PREFIXES = ("04",)
-LINE_04_BRANCH_LAYERS = ("0",)
-LINE_04_FALLBACK_LAYERS = ("Электрика",)
+# Подпись трассы ищется в слое или в имени объекта, точное совпадение всего имени не нужно.
+LINE_10KV_LAYER = ROUTE_10_MARK
+LINE_04KV_LAYER = ROUTE_04_MARK
+LINE_10KV_LAYERS = (LINE_10KV_LAYER,)
+LINE_04_LAYERS = (LINE_04KV_LAYER,)
 # Короткий ввод в КТП (~5 м) не считаем строительной длиной ВЛИ-0,4 кВ.
 LINE_04_MIN_ROUTE_LENGTH_M = 8.0
-LINE_04_BRANCH_MAX_LENGTH_M = 2000.0
 
 
 def read_plan_10kv_data(path: Path) -> tuple[dict[str, Any], list[str]]:
@@ -56,14 +63,9 @@ def read_plan_10kv_data(path: Path) -> tuple[dict[str, Any], list[str]]:
     line_length_10_m = _find_line_length_on_layers(modelspace, LINE_10KV_LAYERS)
     line_length_04_m = _find_line_length_04kv(modelspace, line_length_10_m)
     if line_length_10_m <= 0:
-        warnings.append(
-            f"Полилиния 10 кВ не найдена на слоях: {', '.join(LINE_10KV_LAYERS)}."
-        )
+        warnings.append("Полилиния 10 кВ не найдена: в слое или в имени нет Электрика_10.")
     if line_length_04_m <= 0:
-        warnings.append(
-            "Полилиния 0,4 кВ не найдена на слоях "
-            f"{', '.join(LINE_04_LAYERS)} и короткой ветви на слое 0."
-        )
+        warnings.append("Полилиния 0,4 кВ не найдена: в слое или в имени нет Электрика_04.")
 
     line_length_km = line_length_10_m / 1000 if line_length_10_m > 0 else 0.0
     line_length_04_km = line_length_04_m / 1000 if line_length_04_m > 0 else 0.0
@@ -111,12 +113,12 @@ def _count_10kv_supports(document: Any, modelspace: Any) -> Counter[str]:
         # поэтому проверка имени блока до слоя ошибочно исключала такую опору.
         layer_name = str(insert.dxf.layer or "")
         layer_type = SUPPORT_10KV_LAYER_FALLBACK.get(layer_name)
+        block_name = _resolve_block_name(document, insert)
+        # Заземление, лежащее на слое опоры, опорой не является.
+        if block_name in GROUND_BLOCKS:
+            continue
         if layer_type:
             supports[layer_type] += 1
-            continue
-
-        block_name = _resolve_block_name(document, insert)
-        if block_name in GROUND_BLOCKS:
             continue
 
         label = _read_support_label(insert)
@@ -178,46 +180,13 @@ def _is_arlk_support_label(label: str) -> bool:
 
 
 def _layer_matches_04(line_layer: str) -> bool:
-    if line_layer in LINE_04_LAYERS:
-        return True
-    return any(line_layer.startswith(prefix) for prefix in LINE_04_LAYER_PREFIXES)
+    token = LINE_04KV_LAYER.casefold().replace("ё", "е")
+    return token in str(line_layer or "").casefold().replace("ё", "е")
 
 
 def _find_line_length_04kv(modelspace: Any, line_length_10_m: float = 0.0) -> float:
-    candidates: list[float] = []
-    for polyline in modelspace.query("LWPOLYLINE"):
-        layer_name = str(polyline.dxf.layer or "")
-        if not _layer_matches_04(layer_name):
-            continue
-        length = _open_polyline_length(modelspace, polyline)
-        if length > 0:
-            candidates.append(length)
-    if candidates:
-        return max(candidates)
-
-    fallback_candidates: list[float] = []
-    for polyline in modelspace.query("LWPOLYLINE"):
-        layer_name = str(polyline.dxf.layer or "")
-        if layer_name not in LINE_04_FALLBACK_LAYERS:
-            continue
-        length = _open_polyline_length(modelspace, polyline)
-        if not _is_usable_04_route_length(length, line_length_10_m):
-            continue
-        fallback_candidates.append(length)
-    if fallback_candidates:
-        return max(fallback_candidates)
-
-    branch_candidates: list[float] = []
-    for polyline in modelspace.query("LWPOLYLINE"):
-        layer_name = str(polyline.dxf.layer or "")
-        if layer_name not in LINE_04_BRANCH_LAYERS:
-            continue
-        length = _open_polyline_length(modelspace, polyline)
-        if not _is_usable_04_route_length(length, line_length_10_m):
-            continue
-        if length <= LINE_04_BRANCH_MAX_LENGTH_M:
-            branch_candidates.append(length)
-    return max(branch_candidates) if branch_candidates else 0.0
+    del line_length_10_m
+    return _find_line_length_on_layers(modelspace, LINE_04_LAYERS)
 
 
 def _is_usable_04_route_length(length: float, line_length_10_m: float) -> bool:
@@ -247,14 +216,17 @@ def _open_polyline_length(modelspace: Any, polyline: Any) -> float:
 
 
 def _find_line_length_on_layers(modelspace: Any, layer_names: tuple[str, ...]) -> float:
-    allowed = set(layer_names)
     candidates: list[float] = []
-    for polyline in modelspace.query("LWPOLYLINE"):
-        if polyline.dxf.layer not in allowed:
-            continue
-        length = _open_polyline_length(modelspace, polyline)
-        if length > 0:
-            candidates.append(length)
+    seen: set[str] = set()
+    for mark in layer_names:
+        for polyline in iter_lwpolylines_for_mark(modelspace, mark):
+            identity = str(getattr(polyline.dxf, "handle", "") or id(polyline))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            length = _open_polyline_length(modelspace, polyline)
+            if length > 0:
+                candidates.append(length)
     return max(candidates) if candidates else 0.0
 
 

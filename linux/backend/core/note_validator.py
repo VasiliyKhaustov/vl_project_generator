@@ -428,6 +428,9 @@ def _read_supports_install_note(document: Any) -> str | None:
             if entity.dxftype() != "MTEXT":
                 continue
             text = _plain_mtext(_get_text(entity))
+            lowered = text.casefold()
+            if "самонесущ" in lowered and "несущей жил" not in lowered:
+                continue
             match = re.search(r"по\s+\d+\s+опорам", text, flags=re.IGNORECASE)
             if match:
                 return match.group(0)

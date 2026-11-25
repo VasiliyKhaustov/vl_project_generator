@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Автоматизация ТУ</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261124glass" />
+    <title>PRO</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20261125pro" />
   </head>
   <body data-theme="dark">
     <div class="page-bg" aria-hidden="true">
@@ -16,7 +16,7 @@
     <div class="page-shell">
       <header class="topbar">
         <div>
-          <div class="brand" data-i18n="brand">Автоматизация ТУ</div>
+          <div class="brand" data-i18n="brand">PRO</div>
           <div class="system-status" data-i18n="systemStatus">Инженерная система подготовки документации</div>
         </div>
         <div class="top-actions">
@@ -89,6 +89,11 @@
                   Светлая тема
                 </button>
               </div>
+              <div class="settings-menu__row">
+                <button class="settings-menu__action" id="openUsageGuide" type="button" data-i18n="guideOpen">
+                  Инструкция по использованию
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -97,7 +102,7 @@
       <main>
         <section class="hero">
           <p class="eyebrow" data-i18n="eyebrow">Локальный инженерный контур</p>
-          <h1 class="hero-title" data-i18n="heroTitle">Автоматизация подготовки документации по ТУ</h1>
+          <h1 class="hero-title" data-i18n="heroTitle">Powerline Rationalization &amp; Optimization</h1>
           <p class="hero-copy" data-i18n="heroCopy">
             Загрузите ТУ и готовый DWG/DXF-план, укажите номер проекта — система подготовит пояснительную записку.
           </p>
@@ -453,6 +458,61 @@
       </button>
     </nav>
 
+    <div class="guide-backdrop" id="usageGuideBackdrop" hidden></div>
+    <section class="guide-dialog glass" id="usageGuide" hidden aria-labelledby="usageGuideTitle">
+      <div class="guide-dialog__head">
+        <div>
+          <p class="guide-dialog__eyebrow">PRO</p>
+          <h2 class="guide-dialog__title" id="usageGuideTitle">Инструкция по использованию</h2>
+        </div>
+        <button class="guide-dialog__close liquid-control" id="closeUsageGuide" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div class="guide-dialog__body">
+        <p>Программа не чертит линию и не расставляет опоры. Вы готовите план в AutoCad/NanoCad, загружаете ТУ и план, указываете номер проекта и нажимаете «Старт». Дальше система читает файлы и заполняет пояснительную записку.</p>
+
+        <h3>Windows</h3>
+        <ol>
+          <li>В поле «Номер проекта» впишите номер, например ПСД/48/2026/052.</li>
+          <li>Загрузите технические условия: DOC, DOCX или PDF. Текстовый файл читается точнее. Скан распознаётся, если на компьютере установлен Tesseract.</li>
+          <li>Загрузите план. Предпочтительный формат — DXF, DWG тоже принимается.</li>
+          <li>Нажмите «Старт». Справа идёт строка готовности в процентах.</li>
+          <li>Чтобы обработать ещё один проект, не дожидаясь окончания текущего, нажмите «Параллельный проект» и повторите те же шаги.</li>
+          <li>Готовую записку скачивайте кнопкой «Скачать» рядом со «Старт». Эти кнопки остаются внизу экрана при прокрутке.</li>
+        </ol>
+
+        <h3>Linux</h3>
+        <p>Порядок работы тот же, что в Windows: номер проекта, ТУ, план, «Старт», при необходимости «Параллельный проект» и «Скачать».</p>
+
+        <h3>Слои опор 0,4 кВ</h3>
+        <ul>
+          <li>П23 — блок «Пл_ОпораП23».</li>
+          <li>ПП23 — слой PP23.</li>
+          <li>А23 — блок «Пл_ОпораНВ_А23».</li>
+          <li>УА23* — блок «Пл_ОпораУА23» или «Пл_ОпораНВ_УА23».</li>
+          <li>К21 — блок «Пл_ОпораК21».</li>
+          <li>Заземление — блок «Пл_Заземление».</li>
+        </ul>
+
+        <h3>Слои опор 10 кВ</h3>
+        <ul>
+          <li>П20-3Н — слой «Пл_П20-3Н».</li>
+          <li>А20-3Н — слой «Пл_А20-3Н».</li>
+          <li>А20-3Н с разъединителем — слой «Пл_А20-3Н_РЛК».</li>
+          <li>УП20-3Н — слой «Пл_УП20-3Н».</li>
+          <li>УА20-3Н — слой «Пл_УА20-3Н».</li>
+        </ul>
+        <p>Заземление, лежащее на слое опоры 10 кВ, опорой не считается.</p>
+
+        <h3>Полилинии</h3>
+        <p>Линия 0,4 кВ находится, если в слое или в имени объекта есть «Электрика_04». Это одно и то же имя и в обычном проекте 0,4 кВ, и в ветке 0,4 кВ внутри проекта 10 кВ.</p>
+        <p>Линия 10 кВ находится, если в слое или в имени объекта есть «Электрика_10».</p>
+        <p>Имя не обязано совпадать целиком: достаточно, чтобы эта подпись была в слое или в имени. Слой просто «Электрика» трассой не считается.</p>
+
+        <h3>Ввод в ТП</h3>
+        <p>Если в проекте строится ТП, к округлённой длине полилинии автоматически прибавляется 5 метров на ввод в ТП. Так считается и линия 10 кВ, и линия 0,4 кВ в этом же проекте.</p>
+      </div>
+    </section>
+
     <div class="check-panel-backdrop" id="checkPanelBackdrop" hidden></div>
     <div class="check-panel-backdrop" id="yopkBackdrop" hidden></div>
     <aside class="yopk-panel glass" id="yopkPanel" aria-hidden="true" aria-labelledby="yopkPanelTitle">
@@ -528,6 +588,6 @@
       </div>
     </aside>
 
-    <script src="/static/script.js?v=20261124glass"></script>
+    <script src="/static/script.js?v=20261125pro2"></script>
   </body>
 </html>

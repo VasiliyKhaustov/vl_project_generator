@@ -90,6 +90,51 @@ SUPPORT_BLOCK_ALIASES: dict[str, frozenset[str]] = {
 
 SUPPORT_MAX_DISTANCE_FROM_LINE_M = 50.0
 
+# Трасса находится, если эта подпись есть в слое или в имени объекта.
+ROUTE_04_MARK = "Электрика_04"
+ROUTE_10_MARK = "Электрика_10"
+
+
+def _folded_route_text(value: str) -> str:
+    return value.casefold().replace("ё", "е")
+
+
+def entity_route_texts(entity: Any) -> list[str]:
+    texts: list[str] = []
+    layer = str(getattr(entity.dxf, "layer", "") or "").strip()
+    if layer:
+        texts.append(layer)
+    for attr in ("name", "description"):
+        if entity.dxf.hasattr(attr):
+            value = str(getattr(entity.dxf, attr) or "").strip()
+            if value and value not in texts:
+                texts.append(value)
+    return texts
+
+
+def entity_has_route_mark(entity: Any, mark: str) -> bool:
+    token = _folded_route_text(mark)
+    return any(token in _folded_route_text(text) for text in entity_route_texts(entity))
+
+
+def iter_lwpolylines_for_mark(modelspace: Any, mark: str) -> list[Any]:
+    """Полилинии, у которых слой или имя содержат подпись трассы."""
+    found: list[Any] = []
+    for polyline in modelspace.query("LWPOLYLINE"):
+        if entity_has_route_mark(polyline, mark):
+            found.append(polyline)
+    for insert in modelspace.query("INSERT"):
+        if not entity_has_route_mark(insert, mark):
+            continue
+        try:
+            virtuals = list(insert.virtual_entities())
+        except Exception:
+            continue
+        for virtual in virtuals:
+            if virtual.dxftype() == "LWPOLYLINE":
+                found.append(virtual)
+    return found
+
 
 def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
     if path.suffix.lower() != ".dxf":
@@ -134,9 +179,14 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
     mismatch_points = _catalog_support_points(filtered_candidates)
     if not mismatch_points:
         mismatch_points = [candidate["point"] for candidate in filtered_candidates]
+    main_layer = str((main_polyline or {}).get("layer") or "")
+    # Длина 0,4 кВ берётся только со слоя Электрика_04. Если выбрана линия 10 кВ,
+    # опоры 0,4 кВ всё равно считаем: по ним выбирается папка записки.
+    route_is_10kv_line = main_layer == "Электрика_10"
     enforce_route_proximity = (
         bool(route_points)
         and counting_cluster == route_cluster
+        and not route_is_10kv_line
         and not _route_support_coordinate_mismatch(
             route_points,
             mismatch_points,
@@ -249,7 +299,7 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
             f"Найдено {skipped_start_anchor_support} опор у начала трассы (точка присоединения). "
             "Они не учтены, так как концевая опора К21 стоит на другом конце трассы."
         )
-    if filtered_candidates and route_points and not enforce_route_proximity:
+    if filtered_candidates and route_points and not enforce_route_proximity and not route_is_10kv_line:
         warnings.append(
             "Опоры и основная полилиния находятся в разных системах координат. "
             "Количество опор посчитано по всем блокам на плане без фильтра по трассе."
@@ -271,13 +321,13 @@ def analyze_dxf(path: Path) -> tuple[dict[str, Any], list[str]]:
 
     if main_polyline is None:
         line_length_m = 0.0
-        warnings.append("Основная полилиния ВЛ не найдена.")
+        warnings.append("Полилиния 0,4 кВ не найдена: в слое или в имени нет Электрика_04.")
     else:
         line_length_m = main_polyline["length"]
         if main_polyline["candidates"] > 1:
             warnings.append(
-                "В плане найдено несколько полилиний. Для MVP выбрана полилиния на слое Электрика "
-                "с наибольшим числом опор рядом с трассой."
+                "Найдено несколько полилиний 0,4 кВ (слой или имя Электрика_04). "
+                "Выбрана полилиния с наибольшим числом опор рядом с трассой."
             )
 
     line_length_km = line_length_m / 1000
@@ -479,8 +529,7 @@ def _is_support_on_route(
 ) -> bool:
     if not route_points:
         return True
-    point = (float(insert.dxf.insert.x), float(insert.dxf.insert.y))
-    return _distance_to_polyline(point, route_points) <= _support_distance_tolerance(line_length_m)
+    return _insert_distance_to_polyline(insert, route_points) <= _support_distance_tolerance(line_length_m)
 
 
 def _insert_plan_point(insert: Any) -> tuple[float, float]:
@@ -861,7 +910,7 @@ def _find_main_polyline(
     support_points: list[tuple[float, float]] | None = None,
 ) -> dict[str, Any] | None:
     candidates = []
-    for polyline in modelspace.query("LWPOLYLINE"):
+    for polyline in iter_lwpolylines_for_mark(modelspace, ROUTE_04_MARK):
         if polyline.closed:
             continue
         points = _lwpolyline_points(polyline)
@@ -888,7 +937,8 @@ def _find_main_polyline(
                 "dimension_length": dimension_length["length"] if dimension_length else None,
                 "dimension_count": dimension_length["count"] if dimension_length else 0,
                 "layer": polyline.dxf.layer,
-                "handle": polyline.dxf.handle,
+                "route_text": " ".join(entity_route_texts(polyline)),
+                "handle": str(getattr(polyline.dxf, "handle", "") or ""),
                 "vertices": len(polyline),
                 "nearby_supports": nearby_supports,
             }
@@ -896,12 +946,9 @@ def _find_main_polyline(
 
     if not candidates:
         return None
-
-    electrical = [candidate for candidate in candidates if candidate["layer"] == "Электрика"]
-    pool = electrical or candidates
-    selected = max(pool, key=lambda item: (item["nearby_supports"], item["length"]))
-    selected["candidates"] = len(pool)
-    selected["selection_rule"] = "polyline_length_property_on_electrical_layer" if electrical else "polyline_length_property"
+    selected = max(candidates, key=lambda item: (item["nearby_supports"], item["length"]))
+    selected["candidates"] = len(candidates)
+    selected["selection_rule"] = "polyline_length_property_on_elektrika_04"
     return selected
 
 

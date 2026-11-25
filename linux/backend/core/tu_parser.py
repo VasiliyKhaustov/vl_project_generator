@@ -158,8 +158,25 @@ def _read_pdf(path: Path) -> TuContent:
             raise RuntimeError("Для чтения PDF нужен PyMuPDF или pdfplumber.") from exc
 
 
+def _tesseract_executable() -> str | None:
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    # Сервер запускается с коротким PATH и не видит Homebrew.
+    candidates = (
+        Path("/opt/homebrew/bin/tesseract"),
+        Path("/usr/local/bin/tesseract"),
+        Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+        Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _ocr_pdf_with_tesseract(path: Path, document: Any) -> tuple[str, list[str]]:
-    executable = shutil.which("tesseract")
+    executable = _tesseract_executable()
     if not executable:
         return "", ["PDF выглядит как скан, но tesseract OCR не найден. Загрузите DOCX-версию ТУ или установите tesseract."]
 

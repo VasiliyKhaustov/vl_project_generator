@@ -485,6 +485,10 @@ def _replace_placeholders_in_dxf(
             table_document,
             replacement_map,
         )
+        updated_land_cells = _update_10kv_land_support_table(
+            table_document,
+            replacement_map,
+        )
         updated_protection_cells = _update_10kv_transformer_protection_tables(
             table_document,
             replacement_map,
@@ -528,6 +532,11 @@ def _replace_placeholders_in_dxf(
                 logger.info(
                     "10 kV fixed/specification table cells restored: "
                     f"{updated_fixed_cells}"
+                )
+            if updated_land_cells:
+                logger.info(
+                    "10 kV land-allocation support counts updated: "
+                    f"{updated_land_cells}"
                 )
             if updated_protection_cells:
                 logger.info(
@@ -617,6 +626,7 @@ def _update_10kv_04_length_cells(
 ) -> int:
     """Обновляет все существующие таблицы, зависящие от длины линии слоя 04."""
     route_value = str(replacement_map.get("{{KM_04_ROUTE}}", "") or "").strip()
+    total_value = str(replacement_map.get("{{KM_04}}", "") or "").strip() or route_value
     ktp_value = str(replacement_map.get("{{KTP_ENTRY_KM}}", "") or "").strip()
     reserve_value = str(replacement_map.get("{{KM_04_RESERVE}}", "") or "").strip()
     weight_value = str(replacement_map.get("{{KG_04}}", "") or "").strip()
@@ -640,6 +650,8 @@ def _update_10kv_04_length_cells(
             "строительная длина вли-0,4 кв",
             "строительная длина линии в т. ч.",
             "строительная длина линии в т.ч.",
+        )
+        wire_markers = (
             "монтаж самонесущего изолированного провода с изолированной несущей жилой",
         )
         for marker in text_entities:
@@ -652,8 +664,12 @@ def _update_10kv_04_length_cells(
                     _set_acad_table_cell_text(table, candidates[-1], ktp_value)
                     updated += 1
                 continue
-            if route_value and any(value in marker_text for value in length_markers):
-                _set_acad_table_cell_text(table, candidates[-1], route_value)
+            if total_value and any(value in marker_text for value in length_markers):
+                _set_acad_table_cell_text(table, candidates[-1], total_value)
+                updated += 1
+                continue
+            if total_value and any(value in marker_text for value in wire_markers):
+                _set_acad_table_cell_text(table, candidates[-1], total_value)
                 updated += 1
 
         # Спецификация: длина с запасом 4,5 % и соответствующая масса СИП2.
@@ -767,6 +783,222 @@ def _integer_cell_text_is_shared(table_tags: list[Any], old_text: str) -> bool:
     copies = sum(1 for tag in table_tags if tag.code in {1, 302} and tag.value == old_text)
     # У одной ячейки текст продублирован в group code 1 и 302.
     return copies > 2
+
+
+def _map_count(replacement_map: dict[str, str], key: str) -> int:
+    raw = str(replacement_map.get("{{" + key + "}}", "") or "").replace(",", ".").strip()
+    if not raw:
+        return 0
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 0
+
+
+def _map_area(replacement_map: dict[str, str], key: str, fallback: float) -> str:
+    raw = str(replacement_map.get("{{" + key + "}}", "") or "").strip()
+    if raw:
+        return raw
+    rounded = round(fallback, 3)
+    if rounded == int(rounded):
+        return str(int(rounded))
+    return f"{rounded:.3f}".rstrip("0").rstrip(".")
+
+
+def _land_support_allocation(replacement_map: dict[str, str]) -> dict[str, str]:
+    """Количество и площадь отвода по типам опор ВЛ-10 кВ.
+
+    Промежуточная — П20-3Н. Анкерная — А20-3Н и А20-3Н с разъединителем.
+    Угловая-анкерная — УА20-3Н. Площадь строки — количество × норма на одну опору.
+    """
+    intermediate = _map_count(replacement_map, "P20")
+    anchor = _map_count(replacement_map, "A20") + _map_count(replacement_map, "ARLK")
+    angle = _map_count(replacement_map, "UA")
+    return {
+        "intermediate_count": str(intermediate),
+        "intermediate_area": _map_area(replacement_map, "PS", intermediate * 0.051),
+        "anchor_count": str(anchor),
+        "anchor_area": _map_area(replacement_map, "AS", anchor * 0.102),
+        "angle_count": str(angle),
+        "angle_area": _map_area(replacement_map, "US", angle * 0.153),
+        "total_area": _map_area(
+            replacement_map,
+            "SU",
+            intermediate * 0.051 + anchor * 0.102 + angle * 0.153,
+        ),
+    }
+
+
+_LAND_SUPPORT_RATES = (
+    ("intermediate", ("0,051", "0.051")),
+    ("anchor", ("0,102", "0.102")),
+    ("angle", ("0,153", "0.153")),
+)
+
+
+def _land_rate_kind(plain: str) -> str | None:
+    compact = plain.replace(" ", "")
+    for kind, rates in _LAND_SUPPORT_RATES:
+        if compact in rates:
+            return kind
+    return None
+
+
+def _write_table_cell_entity(entity: Any, value: str) -> None:
+    old_text = _get_text(entity)
+    _set_text(entity, _replace_table_cell_value(old_text, value))
+
+
+def _write_native_cell_by_ordinal(table: Any, ordinal: int, value: str) -> None:
+    tags = table.xtags.subclasses[3]
+    cell_tags = [index for index, tag in enumerate(tags) if tag.code == 302]
+    if not 0 <= ordinal < len(cell_tags):
+        return
+    target_index = cell_tags[ordinal]
+    previous_index = cell_tags[ordinal - 1] if ordinal else -1
+    tags[target_index] = DXFTag(
+        302,
+        _replace_table_cell_value(str(tags[target_index].value), value),
+    )
+    for index in range(previous_index + 1, target_index):
+        if tags[index].code == 1:
+            tags[index] = DXFTag(
+                1,
+                _replace_table_cell_value(str(tags[index].value), value),
+            )
+
+
+def _fill_land_support_block(block: Any, allocation: dict[str, str]) -> int:
+    text_entities = [
+        entity
+        for entity in block
+        if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+    ]
+    # Сначала только читаем ячейки. Площадь 0,153 совпадает с нормой угловой
+    # опоры, и если записать её сразу, следующая ячейка той же строки
+    # будет принята за норму и затрёт количество.
+    writes: list[tuple[Any, str]] = []
+    for entity in text_entities:
+        kind = _land_rate_kind(_plain_table_cell_text(_get_text(entity)))
+        if kind is None or entity.dxf.get("insert", None) is None:
+            continue
+        same_row = [
+            other
+            for other in text_entities
+            if other is not entity
+            and other.dxf.get("insert", None) is not None
+            and abs(other.dxf.insert.y - entity.dxf.insert.y) < 0.8
+            and _TABLE_CELL_VALUE_RE.fullmatch(_plain_table_cell_text(_get_text(other)))
+        ]
+        if not same_row:
+            continue
+        count_cell = min(same_row, key=lambda item: item.dxf.insert.x)
+        area_cell = max(same_row, key=lambda item: item.dxf.insert.x)
+        if count_cell.dxf.insert.x < entity.dxf.insert.x:
+            writes.append((count_cell, allocation[f"{kind}_count"]))
+        if area_cell is not count_cell and area_cell.dxf.insert.x > entity.dxf.insert.x:
+            writes.append((area_cell, allocation[f"{kind}_area"]))
+    updated = 0
+    for entity, value in writes:
+        _write_table_cell_entity(entity, value)
+        updated += 1
+
+    total_marker = next(
+        (
+            entity
+            for entity in text_entities
+            if "итого" in _plain_table_cell_text(_get_text(entity)).casefold()
+        ),
+        None,
+    )
+    if total_marker is not None and total_marker.dxf.get("insert", None) is not None:
+        totals = [
+            entity
+            for entity in text_entities
+            if entity is not total_marker
+            and entity.dxf.get("insert", None) is not None
+            and entity.dxf.insert.x > total_marker.dxf.insert.x
+            and abs(entity.dxf.insert.y - total_marker.dxf.insert.y) < 0.8
+            and _TABLE_CELL_VALUE_RE.fullmatch(_plain_table_cell_text(_get_text(entity)))
+        ]
+        if totals:
+            _write_table_cell_entity(
+                max(totals, key=lambda item: item.dxf.insert.x),
+                allocation["total_area"],
+            )
+            updated += 1
+    return updated
+
+
+def _fill_land_support_native_cells(table: Any, allocation: dict[str, str]) -> int:
+    try:
+        tags = table.xtags.subclasses[3]
+    except (AttributeError, IndexError):
+        return 0
+    cell_tags = [index for index, tag in enumerate(tags) if tag.code == 302]
+    plains = [
+        (ordinal, _plain_table_cell_text(str(tags[index].value)))
+        for ordinal, index in enumerate(cell_tags)
+    ]
+    updated = 0
+
+    def _nearest_numeric(start: int, step: int) -> int | None:
+        ordinal = start + step
+        while 0 <= ordinal < len(plains):
+            plain = plains[ordinal][1]
+            if _land_rate_kind(plain) or "итого" in plain.casefold():
+                return None
+            if _TABLE_CELL_VALUE_RE.fullmatch(plain.replace(" ", "")):
+                return ordinal
+            ordinal += step
+        return None
+
+    for ordinal, plain in plains:
+        kind = _land_rate_kind(plain)
+        if kind is None:
+            continue
+        count_ordinal = _nearest_numeric(ordinal, -1)
+        area_ordinal = _nearest_numeric(ordinal, 1)
+        if count_ordinal is not None:
+            _write_native_cell_by_ordinal(table, count_ordinal, allocation[f"{kind}_count"])
+            updated += 1
+        if area_ordinal is not None:
+            _write_native_cell_by_ordinal(table, area_ordinal, allocation[f"{kind}_area"])
+            updated += 1
+
+    total_ordinal = next(
+        (ordinal for ordinal, plain in plains if "итого" in plain.casefold()),
+        None,
+    )
+    if total_ordinal is not None:
+        area_ordinal = _nearest_numeric(total_ordinal, 1)
+        if area_ordinal is not None:
+            _write_native_cell_by_ordinal(table, area_ordinal, allocation["total_area"])
+            updated += 1
+    return updated
+
+
+def _update_10kv_land_support_table(
+    document: Any,
+    replacement_map: dict[str, str],
+) -> int:
+    allocation = _land_support_allocation(replacement_map)
+    updated = 0
+    for table in document.query("ACAD_TABLE"):
+        block_name = str(table.dxf.get("geometry", "") or "")
+        if not block_name or block_name not in document.blocks:
+            continue
+        block = document.blocks[block_name]
+        corpus = " ".join(
+            _plain_table_cell_text(_get_text(entity))
+            for entity in block
+            if entity.dxftype() in {"TEXT", "MTEXT", "ATTRIB"}
+        ).casefold()
+        if "отвода земли под опоры" not in corpus:
+            continue
+        updated += _fill_land_support_block(block, allocation)
+        updated += _fill_land_support_native_cells(table, allocation)
+    return updated
 
 
 def _set_acad_table_cell_text(table: Any, entity: Any, value: str) -> None:
@@ -2032,9 +2264,9 @@ def _apply_calculated_literal_replacements(text: str, replacement_map: dict[str,
     result = text
 
     supports_note = replacement_map.get("{{SUPPORTS_INSTALL_NOTE}}", "")
-    if supports_note:
-        result = re.sub(r"по\s+\d+\s+опорам", supports_note, result)
-        result = re.sub(r"по\s+одной\s+опоре", supports_note, result)
+    supports_note_10 = replacement_map.get("{{SUPPORTS_INSTALL_NOTE_10}}", "")
+    if supports_note or supports_note_10:
+        result = _replace_all_supports_install_notes(result, supports_note, supports_note_10)
 
     breaker = replacement_map.get("{{BREAKER}}", "")
     komauto = replacement_map.get("{{komauto}}") or replacement_map.get("{{KOMAUTO}}") or ""
@@ -2897,9 +3129,14 @@ def _work_table_computed_field_for_text(text: str) -> str | None:
     if "ввод в ктп" in joined:
         return "KTP_ENTRY_KM"
     if "строительная длина" in joined:
-        return "KM_04_ROUTE"
+        # ВЛЗ-10 кВ: округлённая полилиния плюс 5 м ввода. ВЛИ-0,4 кВ — то же.
+        if "влз" in joined or "10 кв" in joined or "10кв" in joined:
+            return "KM_10"
+        return "KM_04"
     if "изолированной несущей жилой" in joined:
-        return "KM_04_ROUTE"
+        # В проекте 10 кВ это та же строительная длина ВЛИ-0,4 кВ, уже с вводом в КТП.
+        # В записке только 0,4 кВ поля KM_04 нет, строка не переписывается.
+        return "KM_04"
     if "заземляющего спуска" in joined:
         return "H12_DROP"
     if "контура" in joined and "горизонтальн" in joined:
@@ -2917,7 +3154,29 @@ def _work_table_computed_field_for_text(text: str) -> str | None:
     ):
         return "185"
     if "монтаж самонесущего изолированного провода" in joined and "несущей" not in joined:
+        # СИП3 на ВЛЗ-10 кВ: количество равно строительной длине 10 кВ.
+        # Короткий отвод 0,4 кВ остаётся 0,002 км.
+        if "сип3" in joined or "1x50" in joined:
+            return "KM_10"
         return "BRANCH_04_KM"
+    return None
+
+
+def _work_table_10kv_support_field(text: str) -> str | None:
+    """Строка ведомости 10 кВ. Её нельзя путать с промежуточной П23 и анкерной А23."""
+    folded = str(text or "").casefold().replace("ё", "е").replace("р/лк", "рлк")
+    if re.search(r"уп20", folded):
+        return "UP"
+    if re.search(r"уа20", folded):
+        return "UA"
+    if re.search(r"а20", folded) and ("рлк" in folded or "разъедин" in folded):
+        return "ARLK"
+    if "разъедин" in folded or "рлк" in folded:
+        return "ARLK"
+    if re.search(r"а20", folded):
+        return "A20"
+    if re.search(r"п20", folded):
+        return "P20"
     return None
 
 
@@ -2932,6 +3191,9 @@ def _work_table_support_field_for_row(row_cells: list[str]) -> str | None:
         return computed
     if re.search(r"всего\s+опор", name, flags=re.IGNORECASE):
         return "S"
+    support_10kv = _work_table_10kv_support_field(joined or name)
+    if support_10kv:
+        return support_10kv
 
     type_text = _dedupe_table_cell_text(row_cells[2] if len(row_cells) > 2 else "")
     field_name = _work_table_support_field_name(type_text)
@@ -3224,15 +3486,41 @@ def _fix_climate_table_mtext_values(document: Any, replacement_map: dict[str, st
                     break
 
 
-def _replace_supports_install_note_text(raw_value: str, supports_note: str) -> str:
-    return re.sub(r"по\s+\d+\s+опорам", supports_note, raw_value, flags=re.IGNORECASE)
+def _supports_note_for_text(raw_value: str, supports_note: str, supports_note_10: str) -> str:
+    plain = str(raw_value or "").casefold()
+    if supports_note_10 and "самонесущ" in plain and "несущей жил" not in plain:
+        return supports_note_10
+    return supports_note
+
+
+def _replace_supports_install_note_text(
+    raw_value: str,
+    supports_note: str,
+    supports_note_10: str = "",
+) -> str:
+    note = _supports_note_for_text(raw_value, supports_note, supports_note_10)
+    if not note:
+        return raw_value
+    return re.sub(r"по\s+\d+\s+опорам", note, raw_value, flags=re.IGNORECASE)
+
+
+def _replace_all_supports_install_notes(text: str, supports_note: str, supports_note_10: str) -> str:
+    pattern = re.compile(r"по\s+\d+\s+опорам", flags=re.IGNORECASE)
+
+    def replace(match: re.Match[str]) -> str:
+        window = text[max(0, match.start() - 160) : match.end() + 40]
+        note = _supports_note_for_text(window, supports_note, supports_note_10)
+        return note or match.group(0)
+
+    return pattern.sub(replace, text)
 
 
 def _fix_supports_install_note_entities(document: Any, replacement_map: dict[str, str] | None) -> None:
     if not replacement_map:
         return
     supports_note = replacement_map.get("{{SUPPORTS_INSTALL_NOTE}}", "")
-    if not supports_note:
+    supports_note_10 = replacement_map.get("{{SUPPORTS_INSTALL_NOTE_10}}", "")
+    if not supports_note and not supports_note_10:
         return
     for block in document.blocks:
         if not block.name.startswith("*T"):
@@ -3243,7 +3531,7 @@ def _fix_supports_install_note_entities(document: Any, replacement_map: dict[str
             text = _get_text(entity)
             if not re.search(r"по\s+\d+\s+опорам", text, flags=re.IGNORECASE):
                 continue
-            updated = _replace_supports_install_note_text(text, supports_note)
+            updated = _replace_supports_install_note_text(text, supports_note, supports_note_10)
             if updated != text:
                 _set_text(entity, updated)
 
@@ -3252,11 +3540,16 @@ def _fix_supports_install_note_raw(path: Path, replacement_map: dict[str, str] |
     if not replacement_map:
         return
     supports_note = replacement_map.get("{{SUPPORTS_INSTALL_NOTE}}", "")
-    if not supports_note:
+    supports_note_10 = replacement_map.get("{{SUPPORTS_INSTALL_NOTE_10}}", "")
+    if not supports_note and not supports_note_10:
         return
 
     original_text = path.read_text(encoding="utf-8", errors="replace")
-    text = _replace_supports_install_note_in_acad_tables_raw(original_text, supports_note)
+    text = _replace_supports_install_note_in_acad_tables_raw(
+        original_text,
+        supports_note,
+        supports_note_10,
+    )
     block_pattern = re.compile(r"(^  0\nBLOCK\n.*?^  0\nENDBLK)", re.DOTALL | re.MULTILINE)
     object_pattern = re.compile(r"(^  0\nMTEXT\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
 
@@ -3272,7 +3565,11 @@ def _fix_supports_install_note_raw(path: Path, replacement_map: dict[str, str] |
             for pair in pairs:
                 if pair[0].strip() not in {"1", "3", "302"}:
                     continue
-                updated = _replace_supports_install_note_text(pair[1], supports_note)
+                updated = _replace_supports_install_note_text(
+                    pair[1],
+                    supports_note,
+                    supports_note_10,
+                )
                 if updated != pair[1]:
                     pair[1] = updated
                     changed = True
@@ -3285,12 +3582,16 @@ def _fix_supports_install_note_raw(path: Path, replacement_map: dict[str, str] |
         return rebuilt
 
     text = block_pattern.sub(fix_block, text)
-    text = re.sub(r"по\s+\d+\s+опорам", supports_note, text, flags=re.IGNORECASE)
+    text = _replace_all_supports_install_notes(text, supports_note, supports_note_10)
     if text != original_text:
         path.write_text(text, encoding="utf-8")
 
 
-def _replace_supports_install_note_in_acad_tables_raw(text: str, supports_note: str) -> str:
+def _replace_supports_install_note_in_acad_tables_raw(
+    text: str,
+    supports_note: str,
+    supports_note_10: str = "",
+) -> str:
     table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
 
     def fix_table(match: re.Match[str]) -> str:
@@ -3302,7 +3603,11 @@ def _replace_supports_install_note_in_acad_tables_raw(text: str, supports_note: 
         for index, (code, raw_value) in enumerate(pairs):
             if code.strip() not in {"1", "302"}:
                 continue
-            updated = _replace_supports_install_note_text(raw_value, supports_note)
+            updated = _replace_supports_install_note_text(
+                raw_value,
+                supports_note,
+                supports_note_10,
+            )
             if updated != raw_value:
                 pairs[index][1] = updated
                 changed = True

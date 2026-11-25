@@ -6,6 +6,8 @@ set "PY=%VENV%\Scripts\python.exe"
 if not exist "%PY%" (
   echo Создаю окружение Python...
   where py >nul 2>&1 && py -3.12 -m venv "%VENV%"
+  if not exist "%PY%" where py >nul 2>&1 && py -3.13 -m venv "%VENV%"
+  if not exist "%PY%" where py >nul 2>&1 && py -3.11 -m venv "%VENV%"
   if not exist "%PY%" where py >nul 2>&1 && py -3 -m venv "%VENV%"
   if not exist "%PY%" where python >nul 2>&1 && python -m venv "%VENV%"
   if not exist "%PY%" (
@@ -15,9 +17,21 @@ if not exist "%PY%" (
     pause
     exit /b 1
   )
+)
+"%PY%" -c "import uvicorn" >nul 2>&1
+if errorlevel 1 (
+  echo Устанавливаю библиотеки. Первая установка занимает несколько минут, окно не закрывайте.
   "%PY%" -m pip install -U pip
   "%PY%" -m pip install -r "%~dp0requirements.txt"
   "%PY%" -m pip install pywin32
+  "%PY%" -c "import uvicorn" >nul 2>&1
+  if errorlevel 1 (
+    echo.
+    echo Библиотеки не установились. Нужен Python 3.12, не 3.15.
+    echo Удалите папку %VENV% и запустите программу снова.
+    pause
+    exit /b 1
+  )
 )
 powershell -NoProfile -Command "try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8003/health -TimeoutSec 2).StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
 if not errorlevel 1 (

@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from backend.core.calculator import _supports_install_note, round_line_length_m
+
 
 _TRANSFORMER_PROTECTION_TABLE: dict[int, dict[str, Any]] = {
     25: {"nom": "36", "qf": ("25", "25", "-", "-"), "10kv": ("101", "5"), "6kv": ("101", "8")},
@@ -41,17 +43,22 @@ def calculate_materials_10kv(
 
     line_length_m = float(plan_data.get("line_length_10kv_m", 0) or 0)
     line_length_04_m = float(plan_data.get("line_length_04kv_m", 0) or 0)
-    km_10_route = float(plan_data.get("line_length_10kv_km", line_length_m / 1000) or 0)
-    km_04_route = float(plan_data.get("line_length_04kv_km", line_length_04_m / 1000) or 0)
-    if km_04_route <= 0:
+    if line_length_m <= 0:
+        line_length_m = float(plan_data.get("line_length_10kv_km", 0) or 0) * 1000
+    if line_length_04_m <= 0:
         fallback_04_m = float(plan_data.get("line_length_m", 0) or 0)
         if fallback_04_m >= 8 and abs(fallback_04_m - line_length_m) > 1:
             line_length_04_m = fallback_04_m
-            km_04_route = fallback_04_m / 1000
-    # Пакет 10 кВ всегда включает ввод в КТП 5 м, даже если {{6-10}} не извлеклось.
+        else:
+            line_length_04_m = float(plan_data.get("line_length_04kv_km", 0) or 0) * 1000
+    # Сначала как у 0,4 кВ: 110,7 м → 111 м. Потом ввод в КТП, он есть всегда.
+    rounded_10_m = round_line_length_m(line_length_m)
+    rounded_04_m = round_line_length_m(line_length_04_m)
+    km_10_route = rounded_10_m / 1000
+    km_04_route = rounded_04_m / 1000
     ktp_entry_km = 0.005
-    km_10_total = km_10_route + ktp_entry_km
-    km_04_total = km_04_route + ktp_entry_km
+    km_10_total = km_10_route + (ktp_entry_km if rounded_10_m else 0)
+    km_04_total = km_04_route + (ktp_entry_km if rounded_04_m else 0)
     power_10 = _format_km_display(km_10_total)
     km_04 = _format_km_display(km_04_total)
     km_04_display = float(km_04.replace(",", ".")) if km_04 else 0.0
@@ -70,7 +77,7 @@ def calculate_materials_10kv(
     sv101 = sv10 * 0.45
 
     km_10_display = float(power_10.replace(",", ".")) if power_10 else 0.0
-    km10 = km_10_display * 3 * 1.045
+    km10 = km_10_display * 1.045
     kmv = km10 * 334
 
     # А20-3Н с РЛК входит в базовую А20 для ШФ (как и для прочей арматуры).
@@ -159,6 +166,7 @@ def calculate_materials_10kv(
         "128": pole_185,
         "YOPK": yopk_value(branch_pole_type),
         "IZM": total_10kv,
+        "SUPPORTS_INSTALL_NOTE_10": _supports_install_note(total_10kv) if total_10kv else "",
         "P201": _format_decimal(p20 * 0.45, 2),
         "A201": _format_decimal(a20 * 0.9, 2),
         "ARL1": _format_decimal(arlk * 0.9, 2),

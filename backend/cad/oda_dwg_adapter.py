@@ -95,6 +95,8 @@ CLIMATE_TABLE_CLEARANCE_SHIFT_Y = -20.0
 KTP_SCHEME_LIFT_Y = 7.0
 # После выравнивания по центру зазора таблица всё ещё накрывает абзац сверху.
 CLIMATE_TABLE_10KV_DROP_Y = 12.0
+# Записка КЛ: середина зазора выглядит слишком высоко, таблица заходит на верхний абзац.
+KL_CLIMATE_EXTRA_DROP_Y = 38.0
 # Ведомость ссылочных документов, комплектов чертежей и основные показатели: строки по 6.
 REFERENCE_DOCS_ROW_HEIGHT = 6.0
 # Обе ведомости на листе чуть опускаются, но не доезжают до абзаца снизу.
@@ -615,6 +617,7 @@ def _replace_placeholders_in_dxf(
     _fix_toc_electro_item_alignment_raw(output_dxf)
     # ezdxf не записывает новый insert у ACAD_TABLE, поэтому сдвиг делается в тексте DXF.
     _move_climate_table_down_raw(output_dxf)
+    _place_04_climate_table_raw(output_dxf)
     if logger:
         logger.info(f"DXF placeholders replaced: {replaced_count}")
     return replaced_count
@@ -5265,15 +5268,18 @@ def _centered_table_top(
     lower_baseline: float,
     lower_text_height: float,
     table_height: float,
+    *,
+    drop: float = CLIMATE_TABLE_10KV_DROP_Y,
+    center_when_tight: bool = False,
 ) -> float:
     """Верх таблицы ровно между нижней границей верхнего текста и верхом нижнего."""
     lower_top = lower_baseline + lower_text_height
     space = upper_baseline - lower_top
-    if space <= table_height:
+    if space <= table_height and not center_when_tight:
         top = lower_top + table_height
     else:
         top = (upper_baseline + lower_top + table_height) / 2
-    return top - CLIMATE_TABLE_10KV_DROP_Y
+    return top - drop
 
 
 def _climate_table_height(table_text: str) -> float:
@@ -5383,6 +5389,126 @@ def _climate_neighbor_lines(
             continue
         if upper is None or baseline < upper[0]:
             upper = (baseline, height)
+    if upper is None:
+        return None
+    return upper[0], lower[0], lower[1]
+
+
+def _place_04_climate_table_raw(path: Path) -> None:
+    """Ставит климатическую таблицу записки 0,4 кВ в зазор между абзацами."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    table_pattern = re.compile(r"(^  0\nACAD_TABLE\n.*?)(?=^  0\n[A-Z_]+|\Z)", re.DOTALL | re.MULTILINE)
+    tables: list[dict[str, float]] = []
+    for match in table_pattern.finditer(text):
+        table_text = match.group(1)
+        if not _is_climate_table_text(table_text):
+            continue
+        coords = re.search(
+            r" 10\n([-+]?\d+(?:\.\d+)?)\n 20\n([-+]?\d+(?:\.\d+)?)(\n 30\n)",
+            table_text,
+        )
+        if not coords:
+            continue
+        x = float(coords.group(1))
+        y = float(coords.group(2))
+        if not (3300 <= x <= 3600):
+            continue
+        height = _climate_table_height(table_text)
+        if height <= 0:
+            continue
+        tables.append({"x": x, "y": y, "height": height, "span": match.span()})
+    if not tables:
+        return
+
+    document = ezdxf.readfile(path)
+    updated = text
+    for table in reversed(tables):
+        # До разбора MTEXT: explode стирает признак кабельной записки.
+        cable_sheet = _is_kl_climate_sheet(document, table["x"])
+        bounds = _climate_neighbor_lines_wide(document, table["x"])
+        if bounds is None:
+            continue
+        upper_baseline, lower_baseline, lower_height = bounds
+        # Точка вставки — верх таблицы. Ставим её между абзацами.
+        target_top = _centered_table_top(
+            upper_baseline,
+            lower_baseline,
+            lower_height,
+            table["height"],
+            drop=0.0,
+            center_when_tight=True,
+        )
+        if cable_sheet:
+            target_top -= KL_CLIMATE_EXTRA_DROP_Y
+        if abs(target_top - table["y"]) < 0.05:
+            continue
+        start, end = (int(table["span"][0]), int(table["span"][1]))
+        chunk = updated[start:end]
+        coords = re.search(
+            r" 10\n([-+]?\d+(?:\.\d+)?)\n 20\n([-+]?\d+(?:\.\d+)?)(\n 30\n)",
+            chunk,
+        )
+        if not coords:
+            continue
+        replacement = f" 10\n{coords.group(1)}\n 20\n{target_top:.4f}{coords.group(3)}"
+        updated = updated[:start] + chunk.replace(coords.group(0), replacement, 1) + updated[end:]
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+
+
+def _is_kl_climate_sheet(document: Any, table_x: float) -> bool:
+    """Рядом с таблицей текст кабельной записки, а не воздушной 0,4 кВ."""
+    for entity in document.modelspace().query("MTEXT"):
+        raw = entity.text or ""
+        if "Температура воздуха" not in raw:
+            continue
+        insert = entity.dxf.insert
+        if not (insert.x - 40 <= table_x <= insert.x + 500):
+            continue
+        folded = raw.casefold().replace("ё", "е")
+        return "трасса кл" in folded or "проложить кл" in folded
+    return False
+
+
+def _climate_neighbor_lines_wide(
+    document: Any,
+    table_x: float,
+) -> tuple[float, float, float] | None:
+    """Абзацы над и под таблицей. Ширина MTEXT в записке 0,4 кВ уже, чем сам текст."""
+    source = None
+    for entity in document.modelspace().query("MTEXT"):
+        raw = entity.text or ""
+        if "Температура воздуха" not in raw:
+            continue
+        insert = entity.dxf.insert
+        if insert.x - 40 <= table_x <= insert.x + 500:
+            source = entity
+            break
+    if source is None:
+        return None
+
+    holder = document.blocks.new(f"TMP_CLIMATE04_{int(table_x)}")
+    MTextExplode(holder).explode(source)
+    candidates: list[tuple[float, float, str]] = []
+    for entity in holder.query("TEXT"):
+        value = str(entity.dxf.text or "")
+        if not (table_x - 20 <= entity.dxf.insert.x <= table_x + 180):
+            continue
+        candidates.append((float(entity.dxf.insert.y), float(entity.dxf.height or 0), value))
+    lower = None
+    for baseline, height, value in candidates:
+        if "Температура" not in value:
+            continue
+        if lower is None or baseline > lower[0]:
+            lower = (baseline, height)
+    if lower is None:
+        return None
+    upper = None
+    for baseline, _height, _value in candidates:
+        if baseline <= lower[0] + 1:
+            continue
+        if upper is None or baseline < upper[0]:
+            upper = (baseline, _height)
     if upper is None:
         return None
     return upper[0], lower[0], lower[1]

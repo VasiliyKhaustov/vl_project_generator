@@ -14,8 +14,18 @@ from backend.core.calculator import calculate_materials
 from backend.core.dxf_reader import analyze_dxf
 from backend.core.note_validator import validate_filled_note
 from backend.core.replacement_builder import TU_FIELDS, build_replacement_map
+from backend.core.cable_line import (
+    extract_otk_str_kl,
+    is_cable_line_project,
+    is_vl04_plan_noise,
+    sech_kl_from_tu,
+    tu_requires_vl_04,
+)
+from backend.core.plan_reader_kl import read_plan_kl_data
+from backend.core.project_type import resolve_project_is_10kv
 from backend.core.template_selector import select_template_note_path, template_placeholder_warning
-from backend.core.tu_parser import abbreviate_address_display_terms, parse_tu
+from backend.core.template_selector_kl import select_template_note_path_kl
+from backend.core.tu_parser import abbreviate_address_display_terms, parse_tu, read_tu_text
 from backend.core.wire_resolver import WireSelectionError, apply_wire_selection
 
 
@@ -312,12 +322,44 @@ def validate_project_files(
     issues.extend(_issues_from_plan_warnings(plan_warnings))
     issues.extend(_issues_from_plan_data(plan_data))
 
-    template_path, template_warning = select_template_note_path(
-        templates_dir,
-        tu_data,
-        plan_data,
-        logger=logger,
-    )
+    tu_text = ""
+    try:
+        tu_text = read_tu_text(tu_path)
+    except Exception:
+        tu_text = ""
+    project_is_kl = (not resolve_project_is_10kv(tu_text, plan_data)) and is_cable_line_project(tu_text)
+    if project_is_kl and not tu_requires_vl_04(tu_text):
+        issues = [
+            item
+            for item in issues
+            if item.code not in {"PLAN_NO_POLYLINE", "PLAN_NO_SUPPORTS", "PLAN_ZERO_LENGTH", "PLAN_NO_GROUNDING"}
+            and not is_vl04_plan_noise(item.message)
+        ]
+        plan_data["grounding_count"] = 0
+    if project_is_kl:
+        kl_plan, kl_warnings = read_plan_kl_data(plan_dxf_path)
+        plan_data = {**plan_data, **kl_plan}
+        issues.extend(_issues_from_plan_warnings(kl_warnings))
+        requires_vl_04 = tu_requires_vl_04(tu_text)
+        tu_data = {
+            **tu_data,
+            "SECH_KL": sech_kl_from_tu(tu_text),
+            "OTK_STR_KL": extract_otk_str_kl(tu_text) if requires_vl_04 else "",
+        }
+        template_path, template_warning = select_template_note_path_kl(
+            templates_dir,
+            tu_data,
+            plan_data,
+            requires_vl_04=requires_vl_04,
+            logger=logger,
+        )
+    else:
+        template_path, template_warning = select_template_note_path(
+            templates_dir,
+            tu_data,
+            plan_data,
+            logger=logger,
+        )
     summary["template_selected"] = template_path.name
     if template_warning:
         issues.append(

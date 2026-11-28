@@ -144,6 +144,10 @@ const translations = {
     wireHintManual: "Выбран вручную: {wire}. Автоматическое определение будет переопределено.",
     wireResultAuto: "Автоматически определено: {auto}. Итоговый провод: {final}.",
     wireResultManual: "Автоматически определено: {auto}. Итоговый провод: {final}.",
+    wireChosenAutoCable: "Автоматически выбран кабель: {value}.",
+    wireChosenAutoWire: "Автоматически выбран провод: {value}.",
+    wireChosenManual: "Провод выбран вручную: {value}.",
+    wireChosenMissing: "Автоматически кабель или провод не определён.",
     tuUpload: "ТУ DOCX/PDF",
     planUpload: "План DWG/DXF",
     noFile: "Файл не выбран",
@@ -217,6 +221,7 @@ const translations = {
     projectDownloadNote: "Скачать",
     projectDownloadPdf: "PDF",
     projectType04: "0,4 кВ",
+    projectTypeKl: "КЛ",
     projectType10: "10 кВ",
     stateFiles: "Передача файлов",
     stateTu: "Чтение ТУ",
@@ -302,6 +307,10 @@ const translations = {
     wireHintManual: "Selected manually: {wire}. Automatic detection will be overridden.",
     wireResultAuto: "Auto-detected: {auto}. Final wire: {final}.",
     wireResultManual: "Auto-detected: {auto}. Final wire: {final}.",
+    wireChosenAutoCable: "Cable selected automatically: {value}.",
+    wireChosenAutoWire: "Wire selected automatically: {value}.",
+    wireChosenManual: "Wire selected manually: {value}.",
+    wireChosenMissing: "Cable or wire was not detected automatically.",
     tuUpload: "TU DOCX/PDF",
     planUpload: "Plan DWG/DXF",
     noFile: "No file selected",
@@ -373,6 +382,7 @@ const translations = {
     projectDownloadNote: "Download",
     projectDownloadPdf: "PDF",
     projectType04: "0.4 kV",
+    projectTypeKl: "Cable line",
     projectType10: "10 kV",
     stateFiles: "Uploading files",
     stateTu: "Reading TU",
@@ -457,6 +467,10 @@ const translations = {
     wireHintManual: "Manuell gewahlt: {wire}. Automatische Erkennung wird uberschrieben.",
     wireResultAuto: "Automatisch erkannt: {auto}. Endgultiger Leiter: {final}.",
     wireResultManual: "Automatisch erkannt: {auto}. Endgultiger Leiter: {final}.",
+    wireChosenAutoCable: "Kabel automatisch gewahlt: {value}.",
+    wireChosenAutoWire: "Leiter automatisch gewahlt: {value}.",
+    wireChosenManual: "Leiter manuell gewahlt: {value}.",
+    wireChosenMissing: "Kabel oder Leiter wurde nicht automatisch erkannt.",
     tuUpload: "TU DOCX/PDF",
     planUpload: "Plan DWG/DXF",
     noFile: "Keine Datei ausgewahlt",
@@ -528,6 +542,7 @@ const translations = {
     projectDownloadNote: "Laden",
     projectDownloadPdf: "PDF",
     projectType04: "0,4 kV",
+    projectTypeKl: "Kabel",
     projectType10: "10 kV",
     stateFiles: "Dateien ubertragen",
     stateTu: "TU lesen",
@@ -605,6 +620,10 @@ const translations = {
     wireHintManual: "Selezionato manualmente: {wire}. Il rilevamento automatico verra sovrascritto.",
     wireResultAuto: "Rilevato automaticamente: {auto}. Conduttore finale: {final}.",
     wireResultManual: "Rilevato automaticamente: {auto}. Conduttore finale: {final}.",
+    wireChosenAutoCable: "Cavo scelto automaticamente: {value}.",
+    wireChosenAutoWire: "Conduttore scelto automaticamente: {value}.",
+    wireChosenManual: "Conduttore scelto manualmente: {value}.",
+    wireChosenMissing: "Cavo o conduttore non rilevato automaticamente.",
     tuUpload: "TU DOCX/PDF",
     planUpload: "Piano DWG/DXF",
     noFile: "Nessun file selezionato",
@@ -676,6 +695,7 @@ const translations = {
     projectDownloadNote: "Scarica",
     projectDownloadPdf: "PDF",
     projectType04: "0,4 kV",
+    projectTypeKl: "Kabel",
     projectType10: "10 kV",
     stateFiles: "Invio file",
     stateTu: "Lettura TU",
@@ -872,10 +892,16 @@ function formatApiError(payload) {
 
 function formatWireSuccessNotice(payload) {
   const wire = payload?.wire;
-  if (!wire) return "";
-  const auto = wire.wire_auto_detected || "—";
-  const finalWire = wire.wire_final_label || wire.wire_final_value || "—";
-  return ` ${t("wireResultManual").replace("{auto}", auto).replace("{final}", finalWire)}`;
+  const value = wire?.wire_final_label || wire?.wire_final_value || wire?.wire_auto_detected || "";
+  if (!value) {
+    return ` ${t("wireChosenMissing")}`;
+  }
+  const shown = formatWireLabel(String(value));
+  if (wire?.wire_selection_mode === "manual") {
+    return ` ${t("wireChosenManual").replace("{value}", shown)}`;
+  }
+  const key = payload?.project_type === "kl" ? "wireChosenAutoCable" : "wireChosenAutoWire";
+  return ` ${t(key).replace("{value}", shown)}`;
 }
 
 themeToggle.addEventListener("click", () => {
@@ -1218,7 +1244,7 @@ async function runProjectProcessing({
           });
           const aiWarnText = formatAiEngineerNotice(runEntry.aiEngineer);
           showNotice(
-            `${recovered.project_type === "10kv" ? t("success10kv") : t("success")}${aiWarnText}`,
+            `${recovered.project_type === "10kv" ? t("success10kv") : t("success")}${formatWireSuccessNotice(recovered)}${aiWarnText}`,
             aiWarnText ? "error" : "success",
           );
           return;
@@ -1804,7 +1830,7 @@ function renderProjectRuns() {
   projectsList.innerHTML = projectRuns
     .map((entry) => {
       const typeLabel =
-        entry.projectType === "10kv" ? t("projectType10") : entry.projectType === "0.4kv" ? t("projectType04") : "";
+        entry.projectType === "10kv" ? t("projectType10") : entry.projectType === "kl" ? t("projectTypeKl") : entry.projectType === "0.4kv" ? t("projectType04") : "";
       const progress = Math.max(0, Math.min(100, Number(entry.progress) || 0));
       const stage = getProjectStageView(entry);
       const title = t("projectCardTitle").replace("{code}", shortProjectCode(entry.projectNumber));

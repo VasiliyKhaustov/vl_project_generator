@@ -27,6 +27,14 @@ from backend.core.ai_engineer import (
 )
 from backend.core.calculator import calculate_materials
 from backend.core.calculator_10kv import calculate_materials_10kv
+from backend.core.calculator_kl import calculate_materials_kl
+from backend.core.cable_line import (
+    extract_otk_str_kl,
+    is_cable_line_project,
+    is_vl04_plan_noise,
+    sech_kl_from_tu,
+    tu_requires_vl_04,
+)
 from backend.core.delivery_distance import DeliveryDistanceError, calculate_delivery_distance_from_tu
 from backend.core.network import run_with_timeout
 from backend.core.dxf_reader import analyze_dxf
@@ -37,11 +45,14 @@ from backend.core.placeholders_10kv import (
     template_placeholder_warning_10kv,
 )
 from backend.core.plan_reader_10kv import read_plan_10kv_data
+from backend.core.plan_reader_kl import read_plan_kl_data
 from backend.core.project_type import resolve_project_is_10kv
 from backend.core.replacement_builder import build_replacement_map
 from backend.core.replacement_builder_10kv import build_replacement_map_10kv, filter_cad_result_10kv
+from backend.core.replacement_builder_kl import apply_kl_replacements
 from backend.core.template_selector import select_template_note_path, template_placeholder_warning
 from backend.core.template_selector_10kv import select_template_note_path_10kv
+from backend.core.template_selector_kl import select_template_note_path_kl
 from backend.core.tu_parser import parse_tu, read_tu_text
 from backend.core.tu_parser_10kv import enrich_tu_data_10kv
 from backend.core.validation import validate_project_files
@@ -398,9 +409,16 @@ async def detect_project(
         plan_data = {**plan_data, **plan_10kv_data}
 
     is_10kv = resolve_project_is_10kv(tu_text, plan_data)
+    is_kl = (not is_10kv) and is_cable_line_project(tu_text)
+    if is_10kv:
+        detected_type = "10kv"
+    elif is_kl:
+        detected_type = "kl"
+    else:
+        detected_type = "0.4kv"
     return {
         "run_id": session_id,
-        "project_type": "10kv" if is_10kv else "0.4kv",
+        "project_type": detected_type,
         "requires_yopk": is_10kv,
     }
 
@@ -632,7 +650,16 @@ def _execute_project_pipeline(
             warnings=warnings,
         )
 
-        project_is_10kv = resolve_project_is_10kv(read_tu_text(tu_path_obj), plan_data)
+        tu_text_for_type = read_tu_text(tu_path_obj)
+        project_is_10kv = resolve_project_is_10kv(tu_text_for_type, plan_data)
+        project_is_kl = (not project_is_10kv) and is_cable_line_project(tu_text_for_type)
+        requires_vl_04 = tu_requires_vl_04(tu_text_for_type) if project_is_kl else False
+        if project_is_10kv:
+            detected_project_type = "10kv"
+        elif project_is_kl:
+            detected_project_type = "kl"
+        else:
+            detected_project_type = "0.4kv"
         if project_is_10kv:
             logger.info("Определён проект 10 кВ по данным плана.")
             if not branch_pole:
@@ -648,6 +675,27 @@ def _execute_project_pipeline(
             for warning in tu_10kv_warnings:
                 logger.warning(warning)
             logger.info("Данные 10 кВ из плана извлечены.")
+        elif project_is_kl:
+            logger.info("Определён проект кабельной линии.")
+            kl_plan, kl_warnings = read_plan_kl_data(plan_dxf_path)
+            plan_data = {**plan_data, **kl_plan}
+            warnings.extend(kl_warnings)
+            for warning in kl_warnings:
+                logger.warning(warning)
+            tu_data["SECH_KL"] = sech_kl_from_tu(tu_text_for_type)
+            tu_data["OTK_STR_KL"] = extract_otk_str_kl(tu_text_for_type) if requires_vl_04 else ""
+            if tu_data["SECH_KL"]:
+                # В статусе КЛ показываем сечение кабеля 4х50/4х70, а не провод ВЛ 3x70+1x70.
+                wire_data["wire_auto_detected"] = tu_data["SECH_KL"]
+                wire_data["wire_final_label"] = tu_data["SECH_KL"]
+                wire_data["wire_final_value"] = tu_data["SECH_KL"]
+            if not tu_data["SECH_KL"]:
+                warning = "В ТУ не найдено сечение кабельной линии: 4х50 или 4х70."
+                warnings.append(warning)
+                logger.warning(warning)
+            if not requires_vl_04:
+                warnings = [item for item in warnings if not is_vl04_plan_noise(item)]
+                plan_data["grounding_count"] = 0
         else:
             logger.info("Определён проект 0,4 кВ по данным плана.")
             if plan_10kv_warnings:
@@ -655,6 +703,7 @@ def _execute_project_pipeline(
                     logger.warning(warning)
 
         materials_10kv_data: dict[str, Any] = {}
+        materials_kl_data: dict[str, Any] = {}
         materials_data = calculate_materials(tu_data, plan_data)
         logger.info("Производные значения рассчитаны.")
 
@@ -670,6 +719,20 @@ def _execute_project_pipeline(
                 plan_data,
                 logger,
             )
+        elif project_is_kl:
+            materials_kl_data = calculate_materials_kl(
+                tu_data,
+                plan_data,
+                requires_vl_04=requires_vl_04,
+            )
+            logger.info("Производные значения кабельной линии рассчитаны.")
+            template_note_path, template_warning = select_template_note_path_kl(
+                TEMPLATES_DIR,
+                tu_data,
+                plan_data,
+                requires_vl_04=requires_vl_04,
+                logger=logger,
+            )
         else:
             template_note_path, template_warning = select_template_note_path(
                 TEMPLATES_DIR, tu_data, plan_data, logger
@@ -680,7 +743,7 @@ def _execute_project_pipeline(
         project_data = {
             "project_number": project_number,
             "project_number_placeholder": "{{PROJNUMB}}",
-            "project_type": "10kv" if project_is_10kv else "0.4kv",
+            "project_type": detected_project_type,
             "branch_pole_type": branch_pole or None,
             "template_note": template_note_path.name,
             "wire_selection_mode": wire_data["wire_selection_mode"],
@@ -692,6 +755,7 @@ def _execute_project_pipeline(
             "plan_data": plan_data,
             "materials_data": materials_data,
             "materials_10kv_data": materials_10kv_data,
+            "materials_kl_data": materials_kl_data,
         }
         if project_is_10kv:
             replacement_map = build_replacement_map_10kv(
@@ -699,6 +763,11 @@ def _execute_project_pipeline(
                 tu_data,
                 materials_data,
                 materials_10kv_data,
+            )
+        elif project_is_kl:
+            replacement_map = apply_kl_replacements(
+                build_replacement_map(project_number, tu_data, materials_data),
+                materials_kl_data,
             )
         else:
             replacement_map = build_replacement_map(project_number, tu_data, materials_data)
@@ -708,6 +777,8 @@ def _execute_project_pipeline(
         materials_data_path = output.write_json("materials_data.json", materials_data)
         if project_is_10kv:
             output.write_json("materials_10kv_data.json", materials_10kv_data)
+        if project_is_kl:
+            output.write_json("materials_kl_data.json", materials_kl_data)
         project_data_path = output.write_json("project_data.json", project_data)
         replacement_map_path = output.write_json("replacement_map.json", replacement_map)
         logger.info("JSON-файлы сформированы.")
@@ -716,7 +787,7 @@ def _execute_project_pipeline(
             message="Карта замен создана. Заполняю записку…",
             steps={"replacement_map_created": True},
             project_number=project_number,
-            project_type="10kv" if project_is_10kv else "0.4kv",
+            project_type=detected_project_type,
             note_download_url=download_urls["note_download_url"],
             warnings=warnings,
         )
@@ -727,7 +798,7 @@ def _execute_project_pipeline(
             message="Заполняю пояснительную записку…",
             steps={"replacement_map_created": True},
             project_number=project_number,
-            project_type="10kv" if project_is_10kv else "0.4kv",
+            project_type=detected_project_type,
             note_download_url=download_urls["note_download_url"],
             warnings=warnings,
         )
@@ -766,6 +837,8 @@ def _execute_project_pipeline(
                 plan_data,
                 cad_result.get("template_placeholders", []),
             )
+        elif project_is_kl:
+            template_placeholder_warning_msg = None
         else:
             template_placeholder_warning_msg = template_placeholder_warning(
                 template_note_path,
@@ -855,7 +928,7 @@ def _execute_project_pipeline(
             "warnings": warnings,
             "run_id": session_id,
             "project_number": project_number,
-            "project_type": "10kv" if project_is_10kv else "0.4kv",
+            "project_type": detected_project_type,
             "message": "Записка готова." if note_created else "Не удалось сформировать записку.",
             "note_download_url": download_urls["note_download_url"],
             "note_file_name": note_path.name,

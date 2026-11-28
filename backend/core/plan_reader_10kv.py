@@ -46,6 +46,9 @@ LINE_10KV_LAYER = ROUTE_10_MARK
 LINE_04KV_LAYER = ROUTE_04_MARK
 LINE_10KV_LAYERS = (LINE_10KV_LAYER,)
 LINE_04_LAYERS = (LINE_04KV_LAYER,)
+# Старые планы: трасса 10 кВ на слое «10», отвод 0,4 кВ на слое «Электрика».
+LEGACY_10KV_LAYER = "10"
+LEGACY_04KV_LAYER = "Электрика"
 # Короткий ввод в КТП (~5 м) не считаем строительной длиной ВЛИ-0,4 кВ.
 LINE_04_MIN_ROUTE_LENGTH_M = 8.0
 
@@ -61,7 +64,11 @@ def read_plan_10kv_data(path: Path) -> tuple[dict[str, Any], list[str]]:
     supports = _count_10kv_supports(document, modelspace)
 
     line_length_10_m = _find_line_length_on_layers(modelspace, LINE_10KV_LAYERS)
+    if line_length_10_m <= 0:
+        line_length_10_m = _find_line_length_on_exact_layers(modelspace, (LEGACY_10KV_LAYER,))
     line_length_04_m = _find_line_length_04kv(modelspace, line_length_10_m)
+    if line_length_04_m <= 0:
+        line_length_04_m = _find_line_length_on_exact_layers(modelspace, (LEGACY_04KV_LAYER,))
     if line_length_10_m <= 0:
         warnings.append("Полилиния 10 кВ не найдена: в слое или в имени нет Электрика_10.")
     if line_length_04_m <= 0:
@@ -213,6 +220,20 @@ def _open_polyline_length(modelspace: Any, polyline: Any) -> float:
         geometry_length,
     )
     return float(dimension_length["length"] if dimension_length else geometry_length)
+
+
+def _find_line_length_on_exact_layers(modelspace: Any, layer_names: tuple[str, ...]) -> float:
+    """Длина открытой полилинии, чей слой совпадает целиком, без поиска подстроки."""
+    allowed = {name.casefold() for name in layer_names}
+    candidates: list[float] = []
+    for polyline in modelspace.query("LWPOLYLINE"):
+        layer = str(getattr(polyline.dxf, "layer", "") or "").strip().casefold()
+        if layer not in allowed:
+            continue
+        length = _open_polyline_length(modelspace, polyline)
+        if length > 0:
+            candidates.append(length)
+    return max(candidates) if candidates else 0.0
 
 
 def _find_line_length_on_layers(modelspace: Any, layer_names: tuple[str, ...]) -> float:
